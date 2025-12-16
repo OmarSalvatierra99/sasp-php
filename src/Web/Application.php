@@ -1,0 +1,935 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Sasp\Web;
+
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Sasp\Core\DataProcessor;
+use Sasp\Core\DatabaseManager;
+
+/**
+ * Application — SASP / SCIL 2025
+ * Front controller and HTTP dispatcher
+ */
+class Application
+{
+    private DatabaseManager $dbManager;
+    private DataProcessor $dataProcessor;
+    private string $templatesPath;
+    private string $staticPath;
+
+    public function __construct(?DatabaseManager $dbManager = null, ?DataProcessor $dataProcessor = null)
+    {
+        $projectRoot = dirname(__DIR__, 2);
+        $defaultDbPath = $projectRoot . '/scil.db';
+        $configuredPath = (string)($_SERVER['SCIL_DB'] ?? getenv('SCIL_DB') ?: $defaultDbPath);
+        $dbPath = str_starts_with($configuredPath, DIRECTORY_SEPARATOR)
+            ? $configuredPath
+            : $projectRoot . '/' . ltrim($configuredPath, '/');
+        $this->dbManager = $dbManager ?? new DatabaseManager($dbPath);
+        $this->dataProcessor = $dataProcessor ?? new DataProcessor($this->dbManager, $dbPath);
+        $this->templatesPath = __DIR__ . '/../../templates';
+        $this->staticPath = __DIR__ . '/../../static';
+
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+    }
+
+    public function run(): void
+    {
+        $request = Request::fromGlobals($_SESSION ?? []);
+
+        if (!$this->verificarAutenticacion($request)) {
+            return;
+        }
+
+        $this->dispatch($request);
+    }
+
+    private function verificarAutenticacion(Request $request): bool
+    {
+        $path = $request->path();
+
+        $libres = ['/', '/login'];
+        foreach ($libres as $libre) {
+            if ($path === $libre) {
+                return true;
+            }
+        }
+
+        if (str_starts_with($path, '/static/')) {
+            return true;
+        }
+
+        if (!isset($_SESSION['autenticado']) || !$_SESSION['autenticado']) {
+            if ($request->isAjax()) {
+                $this->jsonResponse(['error' => 'Sesión expirada o no autorizada'], 403);
+            } else {
+                $this->redirect('/');
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    private function dispatch(Request $request): void
+    {
+        $method = $request->method();
+        $path = $request->path();
+
+        if ($path === '/' || $path === '/login') {
+            $this->login($request);
+            return;
+        }
+
+        if ($path === '/logout') {
+            $this->logout();
+            return;
+        }
+
+        if ($path === '/dashboard') {
+            $this->dashboard();
+            return;
+        }
+
+        if ($path === '/upload_laboral' && $method === 'POST') {
+            $this->uploadLaboral($request);
+            return;
+        }
+
+        if ($path === '/resultados') {
+            $this->reportePorEnte($request);
+            return;
+        }
+
+        if (preg_match('#^/resultados/([A-Z0-9]+)$#', $path, $matches)) {
+            $this->resultadosPorRfc($matches[1]);
+            return;
+        }
+
+        if (preg_match('#^/solventacion/([A-Z0-9]+)$#', $path, $matches)) {
+            $this->solventacionDetalle($request, $matches[1]);
+            return;
+        }
+
+        if ($path === '/actualizar_estado' && $method === 'POST') {
+            $this->actualizarEstado($request);
+            return;
+        }
+
+        if ($path === '/exportar_por_ente') {
+            $this->exportarPorEnte($request);
+            return;
+        }
+
+        if ($path === '/exportar_general') {
+            $this->exportarExcelGeneral();
+            return;
+        }
+
+        if ($path === '/catalogos') {
+            $this->catalogosHome();
+            return;
+        }
+
+        if ($path === '/descargar-plantilla') {
+            $this->descargarPlantilla();
+            return;
+        }
+
+        if (str_starts_with($path, '/static/')) {
+            $this->serveStatic($path);
+            return;
+        }
+
+        http_response_code(404);
+        echo "404 - Página no encontrada";
+    }
+
+    // ===================================================================
+    // ROUTES
+    // ===================================================================
+
+    private function login(Request $request): void
+    {
+        if ($request->method() === 'POST') {
+            $usuario = trim((string)$request->input('usuario', ''));
+            $clave = trim((string)$request->input('clave', ''));
+            $user = $this->dbManager->getUsuario($usuario, $clave);
+
+            if (!$user) {
+                $this->render('login.php', ['error' => 'Credenciales inválidas']);
+                return;
+            }
+
+            $_SESSION['usuario'] = $user['usuario'];
+            $_SESSION['nombre'] = $user['nombre'];
+            $_SESSION['autenticado'] = true;
+            $_SESSION['entes'] = $user['entes'];
+
+            $this->redirect('/dashboard');
+            return;
+        }
+
+        if (!empty($_SESSION['autenticado'])) {
+            $this->redirect('/dashboard');
+            return;
+        }
+
+        $this->render('login.php');
+    }
+
+    private function logout(): void
+    {
+        session_destroy();
+        $this->redirect('/');
+    }
+
+    private function dashboard(): void
+    {
+        $this->render('dashboard.php', [
+            'nombre' => $_SESSION['nombre'] ?? ''
+        ]);
+    }
+
+    private function uploadLaboral(Request $request): void
+    {
+        if (empty($_FILES['files'])) {
+            $this->jsonResponse(['error' => 'No se enviaron archivos'], 400);
+            return;
+        }
+
+        try {
+            $files = $this->normalizeFilesArray($_FILES['files']);
+            $nombres = array_map(fn($f) => $f['name'], $files);
+            fwrite(STDERR, sprintf("Upload recibido: %s\n", implode(', ', $nombres)));
+
+            [$registrosIndividuales, $alertas] = $this->dataProcessor->extraerRegistrosIndividuales($files);
+
+            [$nInsertados, $nActualizados] = $this->dbManager->guardarRegistrosIndividuales($registrosIndividuales);
+
+            $response = [
+                'mensaje' => "Procesamiento completado. {$nInsertados} nuevos registros, {$nActualizados} actualizados.",
+                'total_procesados' => count($registrosIndividuales),
+                'insertados' => $nInsertados,
+                'actualizados' => $nActualizados,
+                'alertas' => $alertas
+            ];
+
+            $this->jsonResponse($response);
+        } catch (\Throwable $e) {
+            fwrite(STDERR, "Error en upload_laboral: {$e->getMessage()}\n");
+            $this->jsonResponse(['error' => "Error al procesar archivos: {$e->getMessage()}"], 500);
+        }
+    }
+
+    private function reportePorEnte(Request $request): void
+    {
+        $filtroEnte = trim((string)$request->query('ente', ''));
+        $entesUsuario = $_SESSION['entes'] ?? [];
+        $modoPermiso = $this->allowedAll($entesUsuario);
+
+        $resultados = $this->filtrarDuplicadosReales($this->dbManager->obtenerCrucesReales());
+        $trabajadoresPorEnte = $this->dbManager->contarTrabajadoresPorEnte();
+        $catalogo = array_merge($this->dbManager->listarEntes(), $this->dbManager->listarMunicipios());
+
+        $agrupado = [];
+        $entesInfo = [];
+
+        // Pre-cargar info de catálogo
+        foreach ($catalogo as $ente) {
+            $display = $ente['siglas'] ?: $ente['nombre'];
+            $clave = $ente['clave'];
+            $tipo = strtoupper($ente['ambito'] ?? 'ENTE');
+
+            if (!$this->puedeVerEnte($clave, $entesUsuario, $modoPermiso)) {
+                continue;
+            }
+
+            $agrupado[$display] = [];
+            $entesInfo[$display] = [
+                'num' => $ente['num'],
+                'siglas' => $ente['siglas'],
+                'nombre_completo' => $ente['nombre'],
+                'total' => $trabajadoresPorEnte[$clave] ?? 0,
+                'duplicados' => 0,
+                'tipo' => $tipo
+            ];
+        }
+
+        // Agrupar duplicados por ente
+        foreach ($resultados as $r) {
+            $mapaSolvs = $this->dbManager->getSolventacionesPorRfc($r['rfc']);
+
+            foreach ($r['entes'] as $enteClave) {
+                if (!$this->puedeVerEnte($enteClave, $entesUsuario, $modoPermiso)) {
+                    continue;
+                }
+
+                $display = $this->enteDisplay($enteClave);
+                if ($filtroEnte && $display !== $filtroEnte) {
+                    continue;
+                }
+
+                $otrosEntes = array_filter(
+                    array_map(fn($e) => $this->enteSigla($e), $r['entes']),
+                    fn($e) => $this->sanitizeText($e) !== $this->sanitizeText($enteClave)
+                );
+
+                $estadoDefault = $r['estado'] ?? 'Sin valoración';
+                $estadoEntes = [];
+                foreach ($r['entes'] as $en) {
+                    $claveNorm = $this->dbManager->normalizarEnteClave($en);
+                    $estadoEntes[$this->enteSigla($en)] = $mapaSolvs[$claveNorm]['estado'] ?? $estadoDefault;
+                }
+
+                $agrupado[$display][] = [
+                    'rfc' => $r['rfc'],
+                    'nombre' => $r['nombre'],
+                    'puesto' => $this->primerPuesto($r['registros'] ?? []),
+                    'entes' => array_values(array_unique($otrosEntes)),
+                    'estado' => $estadoDefault,
+                    'estado_entes' => $estadoEntes
+                ];
+            }
+        }
+
+        // Calcular duplicados por ente y ordenar
+        foreach ($entesInfo as $display => &$info) {
+            $info['duplicados'] = count($agrupado[$display] ?? []);
+        }
+        unset($info);
+
+        uasort($entesInfo, fn($a, $b) => $this->ordenPorNum($a, $b));
+
+        // Normalizar arrays para template
+        $agrupadoFinal = [];
+        foreach ($agrupado as $k => $v) {
+            if ($filtroEnte && $k !== $filtroEnte) {
+                continue;
+            }
+            $agrupadoFinal[$k] = array_values($v);
+        }
+
+        $this->render('resultados.php', [
+            'resultados' => $agrupadoFinal,
+            'entes_info' => $entesInfo,
+            'filtro_ente' => $filtroEnte
+        ]);
+    }
+
+    private function resultadosPorRfc(string $rfc): void
+    {
+        $info = $this->dbManager->obtenerResultadosPorRfc($rfc);
+
+        if (!$info) {
+            $this->render('empty.php', ['mensaje' => 'No hay registros del trabajador.']);
+            return;
+        }
+
+        $mapaSolvs = $this->dbManager->getSolventacionesPorRfc($rfc);
+        if ($mapaSolvs && isset($info['registros'])) {
+            foreach ($info['registros'] as &$reg) {
+                $enteClave = $this->dbManager->normalizarEnteClave($reg['ente'] ?? '');
+                if (isset($mapaSolvs[$enteClave])) {
+                    $reg['estado_ente'] = $mapaSolvs[$enteClave]['estado'];
+                    $reg['comentario_ente'] = $mapaSolvs[$enteClave]['comentario'] ?? '';
+                }
+            }
+            unset($reg);
+        }
+
+        $this->render('detalle_rfc.php', ['rfc' => $rfc, 'info' => $info]);
+    }
+
+    private function solventacionDetalle(Request $request, string $rfc): void
+    {
+        $enteSel = (string)$request->query('ente', '');
+
+        if ($request->method() === 'POST') {
+            $estado = (string)$request->input('estado', '');
+            $comentario = (string)$request->input('valoracion', $request->input('solventacion', ''));
+            $catalogo = (string)$request->input('catalogo', '');
+            $otroTexto = (string)$request->input('otro_texto', '');
+            $entePost = (string)$request->input('ente', $enteSel);
+
+            $this->dbManager->actualizarSolventacion(
+                $rfc,
+                $estado,
+                $comentario,
+                $catalogo,
+                $otroTexto,
+                $entePost
+            );
+
+            $this->redirect("/resultados/{$rfc}");
+            return;
+        }
+
+        $info = $this->dbManager->obtenerResultadosPorRfc($rfc);
+        if (!$info) {
+            $this->render('empty.php', ['mensaje' => 'No hay registros para este RFC.']);
+            return;
+        }
+
+        $conn = $this->dbManager->getConnection();
+        $stmt = $conn->prepare("
+            SELECT estado, comentario, catalogo, otro_texto
+            FROM solventaciones
+            WHERE rfc=? AND ente=?
+        ");
+        $stmt->execute([$rfc, $this->dbManager->normalizarEnteClave($enteSel) ?: "GENERAL"]);
+        $row = $stmt->fetch();
+
+        $this->render('solventacion.php', [
+            'rfc' => $rfc,
+            'info' => $info,
+            'ente_sel' => $enteSel,
+            'estado_prev' => $row['estado'] ?? ($info['estado'] ?? 'Sin valoración'),
+            'valoracion_prev' => $row['comentario'] ?? ($info['solventacion'] ?? ''),
+            'catalogo_prev' => $row['catalogo'] ?? '',
+            'otro_texto_prev' => $row['otro_texto'] ?? ''
+        ]);
+    }
+
+    private function actualizarEstado(Request $request): void
+    {
+        $data = $request->jsonBody();
+        $rfc = (string)($data['rfc'] ?? '');
+        $estado = (string)($data['estado'] ?? '');
+        $comentario = (string)($data['valoracion'] ?? $data['solventacion'] ?? '');
+        $catalogo = (string)($data['catalogo'] ?? '');
+        $otroTexto = (string)($data['otro_texto'] ?? '');
+        $ente = (string)($data['ente'] ?? '');
+
+        if (!$rfc) {
+            $this->jsonResponse(['error' => 'Falta el RFC'], 400);
+            return;
+        }
+
+        try {
+            $filas = $this->dbManager->actualizarSolventacion(
+                $rfc,
+                $estado,
+                $comentario,
+                $catalogo,
+                $otroTexto,
+                $ente
+            );
+
+            $this->jsonResponse([
+                'mensaje' => "Registro actualizado ({$filas} filas)",
+                'estatus' => $estado
+            ]);
+        } catch (\Throwable $e) {
+            $this->jsonResponse(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    private function exportarPorEnte(Request $request): void
+    {
+        $enteFiltro = trim((string)$request->query('ente', ''));
+        $entesUsuario = $_SESSION['entes'] ?? [];
+        $modoPermiso = $this->allowedAll($entesUsuario);
+
+        if ($enteFiltro === '') {
+            $this->redirect('/resultados');
+            return;
+        }
+
+        $resultados = $this->filtrarDuplicadosReales($this->dbManager->obtenerCrucesReales());
+        $permitidos = array_filter($resultados, function ($r) use ($enteFiltro, $entesUsuario, $modoPermiso) {
+            foreach ($r['entes'] as $ente) {
+                if ($this->enteDisplay($ente) === $enteFiltro &&
+                    $this->puedeVerEnte($ente, $entesUsuario, $modoPermiso)
+                ) {
+                    return true;
+                }
+            }
+            return false;
+        });
+
+        $rows = $this->construirFilasExport($permitidos);
+        $this->exportarSpreadsheet($rows, "SASP_Resultados_{$enteFiltro}");
+    }
+
+    private function exportarExcelGeneral(): void
+    {
+        $resultados = $this->filtrarDuplicadosReales($this->dbManager->obtenerCrucesReales());
+        $rows = $this->construirFilasExport($resultados);
+        $this->exportarSpreadsheet($rows, 'SASP_Resultados_Generales');
+    }
+
+    private function catalogosHome(): void
+    {
+        $entes = $this->dbManager->listarEntes();
+        $municipios = $this->dbManager->listarMunicipios();
+        $this->render('catalogos.php', ['entes' => $entes, 'municipios' => $municipios]);
+    }
+
+    private function descargarPlantilla(): void
+    {
+        $filePath = $this->staticPath . '/Plantilla.xlsx';
+        if (file_exists($filePath)) {
+            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            header('Content-Disposition: attachment; filename="Plantilla.xlsx"');
+            readfile($filePath);
+        } else {
+            http_response_code(404);
+            echo "Plantilla no encontrada";
+        }
+    }
+
+    private function serveStatic(string $path): void
+    {
+        $filePath = $this->staticPath . substr($path, 7); // Remove '/static'
+
+        if (!file_exists($filePath) || !is_file($filePath)) {
+            http_response_code(404);
+            return;
+        }
+
+        $mimeTypes = [
+            'css' => 'text/css',
+            'js' => 'application/javascript',
+            'png' => 'image/png',
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'gif' => 'image/gif',
+            'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        ];
+
+        $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        $mimeType = $mimeTypes[$ext] ?? 'application/octet-stream';
+
+        header("Content-Type: {$mimeType}");
+        readfile($filePath);
+    }
+
+    // ===================================================================
+    // HELPERS
+    // ===================================================================
+
+    private function sanitizeText(?string $s): string
+    {
+        return strtoupper(trim((string)$s));
+    }
+
+    private function allowedAll(array $entesUsuario): ?string
+    {
+        $tieneTodos = false;
+        $tieneEntes = false;
+        $tieneMunis = false;
+
+        foreach ($entesUsuario as $e) {
+            $s = $this->sanitizeText($e);
+            if ($s === "TODOS") {
+                $tieneTodos = true;
+            }
+            if (str_contains($s, "TODOS") && str_contains($s, "ENTE")) {
+                $tieneEntes = true;
+            }
+            if (str_contains($s, "TODOS") && str_contains($s, "MUNICIP")) {
+                $tieneMunis = true;
+            }
+        }
+
+        if ($tieneTodos || ($tieneEntes && $tieneMunis)) {
+            return "ALL";
+        }
+        if ($tieneEntes) {
+            return "ENTES";
+        }
+        if ($tieneMunis) {
+            return "MUNICIPIOS";
+        }
+        return null;
+    }
+
+    private static ?array $entesCache = null;
+
+    private function entesCache(): array
+    {
+        if (self::$entesCache !== null) {
+            return self::$entesCache;
+        }
+
+        $conn = $this->dbManager->getConnection();
+        $stmt = $conn->query("
+            SELECT clave, siglas, nombre, 'ENTE' AS tipo FROM entes
+            UNION ALL
+            SELECT clave, siglas, nombre, 'MUNICIPIO' AS tipo FROM municipios
+        ");
+
+        $data = [];
+        foreach ($stmt->fetchAll() as $r) {
+            $clave = strtoupper(trim($r['clave'] ?? ''));
+            $data[$clave] = [
+                'siglas' => strtoupper(trim($r['siglas'] ?? '')),
+                'nombre' => strtoupper(trim($r['nombre'] ?? '')),
+                'tipo' => $r['tipo']
+            ];
+        }
+
+        self::$entesCache = $data;
+        return $data;
+    }
+
+    private function puedeVerEnte(string $enteClave, array $entesUsuario, ?string $modoPermiso = null): bool
+    {
+        $modoPermiso ??= $this->allowedAll($entesUsuario);
+        $info = $this->entesCache()[$this->sanitizeText($enteClave)] ?? [];
+        $tipoEnte = $info['tipo'] ?? 'ENTE';
+
+        return match ($modoPermiso) {
+            "ALL" => true,
+            "ENTES" => ($tipoEnte === "ENTE"),
+            "MUNICIPIOS" => ($tipoEnte === "MUNICIPIO"),
+            default => $this->anyEnteMatch($entesUsuario, [$enteClave])
+        };
+    }
+
+    private function anyEnteMatch(array $entesUsuario, array $claves): bool
+    {
+        foreach ($entesUsuario as $eu) {
+            if ($this->enteMatch($eu, $claves)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private function enteMatch(string $enteUsuario, array $claveLista): bool
+    {
+        $euser = $this->sanitizeText($enteUsuario);
+
+        foreach ($claveLista as $c) {
+            $cNorm = $this->sanitizeText($c);
+
+            foreach ($this->entesCache() as $k => $d) {
+                if (in_array($euser, [$d['siglas'], $d['nombre'], $k], true)) {
+                    if (in_array($cNorm, [$d['siglas'], $d['nombre'], $k], true)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function enteSigla(?string $clave): string
+    {
+        if (!$clave) {
+            return '';
+        }
+        $s = $this->sanitizeText($clave);
+        foreach ($this->entesCache() as $k => $d) {
+            if (in_array($s, [$k, $d['siglas'], $d['nombre']], true)) {
+                return $d['siglas'] ?: $d['nombre'] ?: $s;
+            }
+        }
+        return $s;
+    }
+
+    private function enteDisplay(?string $v): string
+    {
+        if (!$v) {
+            return "Sin Ente";
+        }
+        $s = $this->sanitizeText($v);
+        foreach ($this->entesCache() as $k => $d) {
+            if (in_array($s, [$k, $d['siglas'], $d['nombre']], true)) {
+                return $d['siglas'] ?: $d['nombre'] ?: $v;
+            }
+        }
+        return $v;
+    }
+
+    private function filtrarDuplicadosReales(array $resultados): array
+    {
+        $resultadosFiltrados = [];
+
+        foreach ($resultados as $r) {
+            $registrosRfc = $r['registros'] ?? [];
+            $qnasPorEnte = [];
+
+            foreach ($registrosRfc as $reg) {
+                $ente = $reg['ente'] ?? '';
+                $qnas = array_keys($reg['qnas'] ?? []);
+                $qnasPorEnte[$ente] = $qnas;
+            }
+
+            $duplicidadReal = false;
+            $entesCruceReal = [];
+
+            $entesLista = array_keys($qnasPorEnte);
+            for ($i = 0; $i < count($entesLista); $i++) {
+                for ($j = $i + 1; $j < count($entesLista); $j++) {
+                    $e1 = $entesLista[$i];
+                    $e2 = $entesLista[$j];
+                    $interseccion = array_intersect($qnasPorEnte[$e1], $qnasPorEnte[$e2]);
+
+                    if (!empty($interseccion)) {
+                        $duplicidadReal = true;
+                        $entesCruceReal[] = $e1;
+                        $entesCruceReal[] = $e2;
+                    }
+                }
+            }
+
+            if (!$duplicidadReal) {
+                continue;
+            }
+
+            $r['entes_cruce_real'] = array_unique($entesCruceReal);
+            $resultadosFiltrados[] = $r;
+        }
+
+        return $resultadosFiltrados;
+    }
+
+    private function primerPuesto(array $registros): string
+    {
+        foreach ($registros as $reg) {
+            $p = trim((string)($reg['puesto'] ?? ''));
+            if ($p !== '') {
+                return $p;
+            }
+        }
+        return 'Sin puesto';
+    }
+
+    private function ordenPorNum(array $a, array $b): int
+    {
+        $numA = rtrim(trim($a['num'] ?? '999'), '.');
+        $numB = rtrim(trim($b['num'] ?? '999'), '.');
+
+        $partesA = [];
+        foreach (explode('.', $numA) as $parte) {
+            $partesA[] = is_numeric($parte) ? (int)$parte : 999;
+        }
+
+        $partesB = [];
+        foreach (explode('.', $numB) as $parte) {
+            $partesB[] = is_numeric($parte) ? (int)$parte : 999;
+        }
+
+        while (count($partesA) < 5) {
+            $partesA[] = 0;
+        }
+        while (count($partesB) < 5) {
+            $partesB[] = 0;
+        }
+
+        return $partesA <=> $partesB;
+    }
+
+    private function construirFilasExport(array $resultados): array
+    {
+        $filas = [];
+        foreach ($resultados as $r) {
+            $registros = $r['registros'] ?? [];
+
+            $qnasPorEnte = [];
+            foreach ($registros as $reg) {
+                $ente = $reg['ente'] ?? '';
+                $qnasPorEnte[$ente] = array_keys($reg['qnas'] ?? []);
+            }
+
+            foreach ($registros as $reg) {
+                $enteOrigen = $reg['ente'] ?? 'Sin Ente';
+                $qnasEnOrigen = $qnasPorEnte[$enteOrigen] ?? [];
+                $interEntes = [];
+                $qnasCruce = [];
+
+                foreach ($qnasPorEnte as $enteOtro => $qnasOtro) {
+                    if ($this->sanitizeText($enteOtro) === $this->sanitizeText($enteOrigen)) {
+                        continue;
+                    }
+                    $inter = array_intersect($qnasEnOrigen, $qnasOtro);
+                    if (!empty($inter)) {
+                        $interEntes[] = $enteOtro;
+                        foreach ($inter as $q) {
+                            $qnasCruce[] = $q;
+                        }
+                    }
+                }
+
+                $qnasCruce = array_unique($qnasCruce);
+                usort($qnasCruce, function ($a, $b) {
+                    return (int)filter_var($a, FILTER_SANITIZE_NUMBER_INT) <=> (int)filter_var($b, FILTER_SANITIZE_NUMBER_INT);
+                });
+
+                $qnasLabel = '';
+                if (count($qnasCruce) >= 24) {
+                    $qnasLabel = "Activo en todo el ejercicio";
+                } elseif (!empty($qnasCruce)) {
+                    $qnasLabel = implode(', ', $qnasCruce);
+                } else {
+                    $qnasLabel = 'N/A';
+                }
+
+                $enteDisplay = $this->enteDisplay($enteOrigen);
+                $estado = $this->dbManager->getEstadoRfcEnte(
+                    $r['rfc'],
+                    $this->dbManager->normalizarEnteClave($enteOrigen) ?? $enteOrigen
+                ) ?? ($r['estado'] ?? 'Sin valoración');
+
+                $filas[] = [
+                    'RFC' => $r['rfc'],
+                    'Nombre' => $r['nombre'],
+                    'Puesto' => $reg['puesto'] ?? 'Sin puesto',
+                    'Fecha Alta' => $reg['fecha_ingreso'] ?? '',
+                    'Fecha Baja' => $reg['fecha_egreso'] ?? '',
+                    'Total Percepciones' => $reg['monto'] ?? 0,
+                    'Ente Origen' => $enteDisplay,
+                    'Entes Incompatibilidad' => implode(', ', array_map(
+                        fn($e) => $this->enteSigla($e),
+                        array_unique($interEntes)
+                    )) ?: 'Sin otros entes',
+                    'Quincenas' => $qnasLabel,
+                    'Estatus' => $estado,
+                    'Solventacion' => $r['solventacion'] ?? ''
+                ];
+            }
+        }
+
+        return $filas;
+    }
+
+    private function exportarSpreadsheet(array $rows, string $filenameBase): void
+    {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $headers = [
+            'RFC',
+            'Nombre',
+            'Puesto',
+            'Ente Origen',
+            'Fecha Alta',
+            'Fecha Baja',
+            'Total Percepciones',
+            'Entes Incompatibilidad',
+            'Quincenas Cruce',
+            'Estatus'
+        ];
+
+        $col = 1;
+        foreach ($headers as $header) {
+            $sheet->setCellValueByColumnAndRow($col, 1, $header);
+            $col++;
+        }
+
+        $rowNum = 2;
+        foreach ($rows as $row) {
+            $sheet->setCellValueByColumnAndRow(1, $rowNum, $row['RFC']);
+            $sheet->setCellValueByColumnAndRow(2, $rowNum, $row['Nombre']);
+            $sheet->setCellValueByColumnAndRow(3, $rowNum, $row['Puesto']);
+            $sheet->setCellValueByColumnAndRow(4, $rowNum, $row['Ente Origen']);
+            $sheet->setCellValueByColumnAndRow(5, $rowNum, $row['Fecha Alta']);
+            $sheet->setCellValueByColumnAndRow(6, $rowNum, $row['Fecha Baja']);
+            $sheet->setCellValueByColumnAndRow(7, $rowNum, $row['Total Percepciones']);
+            $sheet->setCellValueByColumnAndRow(8, $rowNum, $row['Entes Incompatibilidad']);
+            $sheet->setCellValueByColumnAndRow(9, $rowNum, $row['Quincenas']);
+            $sheet->setCellValueByColumnAndRow(10, $rowNum, $row['Estatus']);
+            $rowNum++;
+        }
+
+        foreach (range(1, 10) as $colIndex) {
+            $sheet->getColumnDimensionByColumn($colIndex)->setAutoSize(true);
+        }
+
+        $filename = $filenameBase . '_' . date('Ymd_His') . '.xlsx';
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header("Content-Disposition: attachment; filename=\"{$filename}\"");
+        header('Cache-Control: max-age=0');
+
+        $writer = new Xlsx($spreadsheet);
+        $writer->save('php://output');
+        exit;
+    }
+
+    private function render(string $template, array $data = []): void
+    {
+        $templatePath = $this->resolveTemplatePath($template);
+
+        if (!$templatePath) {
+            http_response_code(500);
+            echo "Template not found: {$template}";
+            return;
+        }
+
+        extract($data);
+
+        $sanitize_text = fn($s) => $this->sanitizeText($s);
+        $ente_display = fn($v) => $this->enteDisplay($v);
+        $ente_sigla = fn($c) => $this->enteSigla($c);
+        $db_manager = $this->dbManager;
+
+        ob_start();
+        include $templatePath;
+        $output = ob_get_clean();
+
+        echo $output;
+    }
+
+    private function resolveTemplatePath(string $template): ?string
+    {
+        $candidates = [];
+        if (str_ends_with($template, '.php') || str_ends_with($template, '.html')) {
+            $candidates[] = $template;
+        } else {
+            $candidates[] = $template . '.php';
+            $candidates[] = $template . '.html';
+        }
+
+        foreach ($candidates as $candidate) {
+            $path = $this->templatesPath . '/' . ltrim($candidate, '/');
+            if (file_exists($path)) {
+                return $path;
+            }
+        }
+
+        return null;
+    }
+
+    private function jsonResponse(array $data, int $status = 200): void
+    {
+        http_response_code($status);
+        header('Content-Type: application/json');
+        echo json_encode($data, JSON_UNESCAPED_UNICODE);
+    }
+
+    private function redirect(string $path): void
+    {
+        header("Location: {$path}");
+        exit;
+    }
+
+    private function normalizeFilesArray(array $files): array
+    {
+        if (!isset($files['tmp_name']) || !is_array($files['tmp_name'])) {
+            return [$files];
+        }
+
+        $normalized = [];
+        $count = count($files['tmp_name']);
+
+        for ($i = 0; $i < $count; $i++) {
+            $normalized[] = [
+                'name' => $files['name'][$i],
+                'type' => $files['type'][$i],
+                'tmp_name' => $files['tmp_name'][$i],
+                'error' => $files['error'][$i],
+                'size' => $files['size'][$i]
+            ];
+        }
+
+        return $normalized;
+    }
+}

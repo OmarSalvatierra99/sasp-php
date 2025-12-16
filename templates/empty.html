@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Sin resultados - SASP{% endblock %}
+
+{% block content %}
+<div class="empty-container">
+  <h2>No se encontraron resultados</h2>
+  <p>{{ mensaje }}</p>
+  <a href="{{ url_for('reporte_por_ente') }}" class="btn btn-primary">Volver a resultados</a>
+</div>
+{% endblock %}
+
