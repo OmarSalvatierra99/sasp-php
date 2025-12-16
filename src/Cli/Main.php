@@ -27,6 +27,7 @@ class Main
             'serve' => self::serve($argv),
             'db:init' => self::dbInit(),
             'db:seed' => self::dbSeed(),
+            'db:add-test-user' => self::addTestUser(),
             'help', '--help', '-h' => self::help(),
             default => self::unknownCommand($command),
         };
@@ -155,6 +156,43 @@ PHP
     }
 
     /**
+     * Create an idempotent test user (usuario: test / clave: test1)
+     */
+    private static function addTestUser(): int
+    {
+        fwrite(STDOUT, "👤 Creando usuario de prueba...\n");
+
+        $dbPath = $_SERVER['SCIL_DB'] ?? getenv('SCIL_DB') ?: 'scil.db';
+
+        // DatabaseManager initializes the PDO SQLite connection and tables
+        $db = new DatabaseManager($dbPath);
+        $conn = $db->getConnection();
+
+        $usuario = 'test';
+        $clavePlano = 'test1';
+        $claveHash = hash('sha256', $clavePlano); // reuse existing hashing used by getUsuario()
+
+        $check = $conn->prepare("
+            SELECT id FROM usuarios WHERE LOWER(usuario) = LOWER(?) LIMIT 1
+        ");
+        $check->execute([$usuario]);
+        if ($check->fetchColumn()) {
+            fwrite(STDOUT, "ℹ️  El usuario '{$usuario}' ya existe; no se hicieron cambios\n");
+            return 0;
+        }
+
+        $insert = $conn->prepare("
+            INSERT INTO usuarios (nombre, usuario, clave, entes)
+            VALUES (?, ?, ?, ?)
+        ");
+        $insert->execute(['Usuario de prueba', $usuario, $claveHash, 'NINGUNO']);
+
+        fwrite(STDOUT, "✅ Usuario '{$usuario}' creado con contraseña '{$clavePlano}'\n");
+
+        return 0;
+    }
+
+    /**
      * Load entes or municipios from Excel file
      */
     private static function loadEntesFromExcel(DatabaseManager $db, string $file, string $table): void
@@ -277,6 +315,7 @@ Comandos disponibles:
   serve [puerto]     Inicia el servidor de desarrollo (puerto por defecto: 5006)
   db:init            Inicializa la base de datos y crea las tablas
   db:seed            Puebla la base de datos con datos iniciales
+  db:add-test-user   Crea el usuario de prueba (usuario: test / clave: test1)
   help               Muestra esta ayuda
 
 Ejemplos:
