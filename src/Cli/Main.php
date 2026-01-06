@@ -48,27 +48,8 @@ class Main
         }
 
         $host = '0.0.0.0';
-        $docRoot = __DIR__ . '/../../public';
-
-        // Create public directory if it doesn't exist
-        if (!is_dir($docRoot)) {
-            mkdir($docRoot, 0755, true);
-        }
-
-        // Create index.php router if it doesn't exist
+        $docRoot = __DIR__ . '/../..';
         $indexPath = $docRoot . '/index.php';
-        if (!file_exists($indexPath)) {
-            file_put_contents($indexPath, <<<'PHP'
-<?php
-declare(strict_types=1);
-
-require __DIR__ . '/../vendor/autoload.php';
-
-$app = new \Sasp\Web\Application();
-$app->run();
-PHP
-            );
-        }
 
         fwrite(STDERR, "🚀 Iniciando servidor en http://{$host}:{$port}\n");
         fwrite(STDERR, "📂 Document root: {$docRoot}\n");

@@ -68,7 +68,7 @@ php bin/sasp serve 8080
 
 #### Apache
 
-1. Point your virtual host document root to `public/`
+1. Point your virtual host document root to the project root
 2. Ensure `.htaccess` is enabled (`AllowOverride All`)
 3. Restart Apache
 
@@ -77,9 +77,9 @@ Example Apache virtual host:
 ```apache
 <VirtualHost *:80>
     ServerName sasp.local
-    DocumentRoot /path/to/sasp-php/public
+    DocumentRoot /path/to/sasp-php
 
-    <Directory /path/to/sasp-php/public>
+    <Directory /path/to/sasp-php>
         AllowOverride All
         Require all granted
     </Directory>
@@ -95,7 +95,7 @@ Example Apache virtual host:
 server {
     listen 80;
     server_name sasp.local;
-    root /path/to/sasp-php/public;
+    root /path/to/sasp-php;
     index index.php;
 
     location / {
@@ -156,9 +156,15 @@ sasp-php/
 │   ├── Estatales.xlsx    # State entities catalog
 │   ├── Municipales.xlsx  # Municipal entities catalog
 │   └── Usuarios_SASP_2025.xlsx  # Users catalog
-├── public/               # Web server document root
-│   ├── index.php         # Front controller
-│   └── .htaccess         # Apache rewrite rules
+├── composer              # Local Composer PHAR
+├── composer.json         # Dependencies and autoload configuration
+├── composer.lock         # Locked dependency versions
+├── config.php            # Runtime defaults
+├── css/                  # Stylesheets
+├── img/                  # Images and icons
+├── index.php             # Web entry point
+├── js/                   # Front-end scripts
+├── scil.db               # SQLite database (dev default)
 ├── src/
 │   ├── Cli/
 │   │   └── Main.php      # CLI command handler
@@ -167,13 +173,10 @@ sasp-php/
 │   │   └── DataProcessor.php     # Excel processing and duplication detection
 │   └── Web/
 │       └── Application.php       # Web application and routes
-├── static/               # CSS, JS, images, template files
 ├── templates/            # Jinja2/PHP templates
 ├── tests/                # PHPUnit tests
-├── composer.json         # Dependencies and autoload configuration
-├── CLAUDE.md             # Project instructions for Claude Code
-├── MIGRATION_NOTES.md    # File-by-file porting notes
-├── PARITY.md             # Feature parity matrix
+├── uploads/              # Downloadable templates
+├── vendor/               # Composer dependencies
 └── README.md             # This file
 ```
 

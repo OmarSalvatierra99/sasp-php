@@ -6,9 +6,9 @@
   <title><?php echo $title ?? 'SASP - Sistema de Auditoría de Servicios Personales'; ?></title>
 
   <!-- Recursos globales -->
-  <link rel="icon" href="/static/ofs_logo.png" type="image/png">
-  <link rel="stylesheet" href="/static/css/style.css">
-  <script defer src="/static/js/main.js"></script>
+  <link rel="icon" href="/img/ofs_logo.png" type="image/png">
+  <link rel="stylesheet" href="/css/style.css">
+  <script defer src="/js/main.js"></script>
 </head>
 
 <body>
@@ -18,7 +18,7 @@
   <nav class="navbar">
     <div class="nav-container">
       <div class="nav-brand">
-        <img src="/static/ofs_logo.png" alt="OFS" class="nav-logo">
+        <img src="/img/ofs_logo.png" alt="OFS" class="nav-logo">
         <div class="nav-title">
           <h1 class="nav-system">SASP</h1>
           <span class="nav-subtitle">Sistema de Auditoría de Servicios Personales</span>

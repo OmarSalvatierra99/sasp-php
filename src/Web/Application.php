@@ -18,7 +18,8 @@ class Application
     private DatabaseManager $dbManager;
     private DataProcessor $dataProcessor;
     private string $templatesPath;
-    private string $staticPath;
+    private string $assetsPath;
+    private string $downloadsPath;
 
     public function __construct(?DatabaseManager $dbManager = null, ?DataProcessor $dataProcessor = null)
     {
@@ -31,7 +32,8 @@ class Application
         $this->dbManager = $dbManager ?? new DatabaseManager($dbPath);
         $this->dataProcessor = $dataProcessor ?? new DataProcessor($this->dbManager, $dbPath);
         $this->templatesPath = __DIR__ . '/../../templates';
-        $this->staticPath = __DIR__ . '/../../static';
+        $this->assetsPath = dirname(__DIR__, 2);
+        $this->downloadsPath = $this->assetsPath . '/uploads';
 
         if (session_status() === PHP_SESSION_NONE) {
             session_start();
@@ -60,7 +62,7 @@ class Application
             }
         }
 
-        if (str_starts_with($path, '/static/')) {
+        if ($this->isAssetPath($path)) {
             return true;
         }
 
@@ -141,7 +143,7 @@ class Application
             return;
         }
 
-        if (str_starts_with($path, '/static/')) {
+        if ($this->isAssetPath($path)) {
             $this->serveStatic($path);
             return;
         }
@@ -473,7 +475,7 @@ class Application
 
     private function descargarPlantilla(): void
     {
-        $filePath = $this->staticPath . '/Plantilla.xlsx';
+        $filePath = $this->downloadsPath . '/Plantilla.xlsx';
         if (file_exists($filePath)) {
             header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
             header('Content-Disposition: attachment; filename="Plantilla.xlsx"');
@@ -486,7 +488,12 @@ class Application
 
     private function serveStatic(string $path): void
     {
-        $filePath = $this->staticPath . substr($path, 7); // Remove '/static'
+        $filePath = $this->resolveAssetPath($path);
+
+        if ($filePath === null) {
+            http_response_code(404);
+            return;
+        }
 
         if (!file_exists($filePath) || !is_file($filePath)) {
             http_response_code(404);
@@ -508,6 +515,33 @@ class Application
 
         header("Content-Type: {$mimeType}");
         readfile($filePath);
+    }
+
+    private function isAssetPath(string $path): bool
+    {
+        return str_starts_with($path, '/css/')
+            || str_starts_with($path, '/js/')
+            || str_starts_with($path, '/img/');
+    }
+
+    private function resolveAssetPath(string $path): ?string
+    {
+        if (!$this->isAssetPath($path)) {
+            return null;
+        }
+
+        $root = realpath($this->assetsPath);
+        $candidate = realpath($this->assetsPath . '/' . ltrim($path, '/'));
+
+        if ($root === false || $candidate === false) {
+            return null;
+        }
+
+        if (!str_starts_with($candidate, $root . DIRECTORY_SEPARATOR)) {
+            return null;
+        }
+
+        return $candidate;
     }
 
     // ===================================================================

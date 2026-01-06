@@ -22,7 +22,8 @@ class DatabaseManager
     {
         $normalized = rtrim($message, "\r\n");
 
-        if (defined('STDERR')) {
+        // Only output to STDERR in CLI mode, use error_log in web context
+        if (php_sapi_name() === 'cli' && defined('STDERR')) {
             fwrite(STDERR, $normalized . PHP_EOL);
             return;
         }
@@ -42,18 +43,30 @@ class DatabaseManager
      */
     private function resolveDbPath(string $dbPath): string
     {
+        error_log("DEBUG resolveDbPath START - input dbPath: " . $dbPath);
+        error_log("DEBUG __DIR__: " . __DIR__);
+
         $envPath = getenv('SCIL_DB');
+        error_log("DEBUG getenv('SCIL_DB'): " . ($envPath ?: 'false/empty'));
         if ($envPath !== false && $envPath !== '') {
             $dbPath = $envPath;
+            error_log("DEBUG using envPath: " . $dbPath);
         }
 
         $isAbsolute = str_starts_with($dbPath, DIRECTORY_SEPARATOR)
             || (bool)preg_match('/^[A-Za-z]:[\\\\\\/]/', $dbPath);
+        error_log("DEBUG isAbsolute: " . ($isAbsolute ? 'true' : 'false'));
 
         $projectRoot = dirname(__DIR__, 2);
-        $path = $isAbsolute ? $dbPath : $projectRoot . DIRECTORY_SEPARATOR . $dbPath;
+        error_log("DEBUG projectRoot: " . $projectRoot);
 
-        return realpath($path) ?: $path;
+        $path = $isAbsolute ? $dbPath : $projectRoot . DIRECTORY_SEPARATOR . $dbPath;
+        error_log("DEBUG path before realpath: " . $path);
+
+        $resolved = realpath($path) ?: $path;
+        error_log("DEBUG path after realpath: " . $resolved);
+
+        return $resolved;
     }
 
     /**

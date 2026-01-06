@@ -4,15 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SASP | Acceso</title>
-  <link rel="icon" href="/static/ofs_logo.png" type="image/png">
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="icon" href="/img/ofs_logo.png" type="image/png">
+  <link rel="stylesheet" href="/css/style.css">
 </head>
 
 <body class="login-body">
   <div class="login-wrapper">
     <div class="login-card">
       <div class="login-header">
-        <img src="/static/ofs_logo.png" alt="OFS Logo" class="login-logo">
+        <img src="/img/ofs_logo.png" alt="OFS Logo" class="login-logo">
         <h1 class="login-title">SASP</h1>
         <p class="login-subtitle">
           Sistema de Auditoría de Servicios Personales<br>
