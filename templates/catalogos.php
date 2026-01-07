@@ -4,66 +4,72 @@ ob_start();
 ?>
 
 <div class="catalogos">
-  <header class="page-header">
-    <h2>Catálogos</h2>
-    <p class="subtitle">Entes estatales y municipios registrados en el sistema.</p>
+  <header class="header-flex">
+    <h2>Catálogos Institucionales</h2>
+    <span class="subtitle">Consulta de Entes Estatales y Municipales Registrados</span>
   </header>
 
-  <section class="catalogo-section">
-    <h3>Entes Estatales</h3>
-    <div class="tabla-wrapper">
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" data-tab="entes">Entes Estatales</button>
+    <button class="tab" data-tab="municipios">Municipios</button>
+  </div>
+
+  <!-- Tab Entes -->
+  <div class="tab-content active" id="tab-entes">
+    <?php if (!empty($entes)): ?>
       <table class="tabla-resultados">
         <thead>
           <tr>
             <th>NUM</th>
-            <th>Clave</th>
-            <th>Siglas</th>
             <th>Nombre</th>
+            <th>Siglas</th>
             <th>Clasificación</th>
           </tr>
         </thead>
         <tbody>
           <?php foreach ($entes as $ente): ?>
             <tr>
-              <td><?php echo htmlspecialchars((string)$ente['num']); ?></td>
-              <td><?php echo htmlspecialchars((string)$ente['clave']); ?></td>
-              <td><?php echo htmlspecialchars((string)($ente['siglas'] ?? '')); ?></td>
+              <td><?php echo htmlspecialchars((string)($ente['num'] ?? '-')); ?></td>
               <td><?php echo htmlspecialchars((string)$ente['nombre']); ?></td>
-              <td><?php echo htmlspecialchars((string)($ente['clasificacion'] ?? '')); ?></td>
+              <td><?php echo htmlspecialchars((string)($ente['siglas'] ?? '-')); ?></td>
+              <td><?php echo htmlspecialchars((string)($ente['clasificacion'] ?? '-')); ?></td>
             </tr>
           <?php endforeach; ?>
         </tbody>
       </table>
-    </div>
-  </section>
+    <?php else: ?>
+      <p class="msg-vacio">No hay registros en el catálogo de entes.</p>
+    <?php endif; ?>
+  </div>
 
-  <section class="catalogo-section">
-    <h3>Municipios</h3>
-    <div class="tabla-wrapper">
+  <!-- Tab Municipios -->
+  <div class="tab-content" id="tab-municipios">
+    <?php if (!empty($municipios)): ?>
       <table class="tabla-resultados">
         <thead>
           <tr>
             <th>NUM</th>
-            <th>Clave</th>
-            <th>Siglas</th>
             <th>Nombre</th>
+            <th>Siglas</th>
             <th>Clasificación</th>
           </tr>
         </thead>
         <tbody>
           <?php foreach ($municipios as $mun): ?>
             <tr>
-              <td><?php echo htmlspecialchars((string)$mun['num']); ?></td>
-              <td><?php echo htmlspecialchars((string)$mun['clave']); ?></td>
-              <td><?php echo htmlspecialchars((string)($mun['siglas'] ?? '')); ?></td>
+              <td><?php echo htmlspecialchars((string)($mun['num'] ?? '-')); ?></td>
               <td><?php echo htmlspecialchars((string)$mun['nombre']); ?></td>
-              <td><?php echo htmlspecialchars((string)($mun['clasificacion'] ?? '')); ?></td>
+              <td><?php echo htmlspecialchars((string)($mun['siglas'] ?? '-')); ?></td>
+              <td><?php echo htmlspecialchars((string)($mun['clasificacion'] ?? '-')); ?></td>
             </tr>
           <?php endforeach; ?>
         </tbody>
       </table>
-    </div>
-  </section>
+    <?php else: ?>
+      <p class="msg-vacio">No hay registros en el catálogo de municipios.</p>
+    <?php endif; ?>
+  </div>
 </div>
 
 <?php

@@ -81,7 +81,7 @@ class Application
     private function dispatch(Request $request): void
     {
         $method = $request->method();
-        $path = $request->path();
+        $path = rtrim($request->path(), '/') ?: '/';
 
         if ($path === '/' || $path === '/login') {
             $this->login($request);

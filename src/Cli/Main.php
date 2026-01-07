@@ -112,7 +112,7 @@ class Main
      */
     private static function loadCatalogData(DatabaseManager $db): void
     {
-        $catalogosPath = __DIR__ . '/../../catalogos';
+        $catalogosPath = __DIR__ . '/../../seed-data';
 
         // Load Entes (State entities)
         $entesFile = $catalogosPath . '/Estatales.xlsx';
@@ -210,6 +210,12 @@ class Main
                 $siglas = trim((string)($row['SIGLAS'] ?? ''));
                 $clasificacion = trim((string)($row['CLASIFICACION'] ?? ''));
                 $ambito = $table === 'municipios' ? 'MUNICIPAL' : 'ESTATAL';
+
+                // Generate CLAVE from NUM if not provided
+                if (!$clave && $num) {
+                    $prefix = $table === 'municipios' ? 'MUN' : 'ENTE';
+                    $clave = $prefix . '_' . str_replace('.', '_', $num);
+                }
 
                 if (!$clave || !$nombre) {
                     continue;
