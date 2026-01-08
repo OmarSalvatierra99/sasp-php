@@ -208,7 +208,7 @@ class Application
         try {
             $files = $this->normalizeFilesArray($_FILES['files']);
             $nombres = array_map(fn($f) => $f['name'], $files);
-            fwrite(STDERR, sprintf("Upload recibido: %s\n", implode(', ', $nombres)));
+            error_log(sprintf("Upload recibido: %s", implode(', ', $nombres)));
 
             [$registrosIndividuales, $alertas] = $this->dataProcessor->extraerRegistrosIndividuales($files);
 
@@ -224,7 +224,7 @@ class Application
 
             $this->jsonResponse($response);
         } catch (\Throwable $e) {
-            fwrite(STDERR, "Error en upload_laboral: {$e->getMessage()}\n");
+            error_log("Error en upload_laboral: {$e->getMessage()}");
             $this->jsonResponse(['error' => "Error al procesar archivos: {$e->getMessage()}"], 500);
         }
     }

@@ -24,7 +24,7 @@ class DatabaseManager
 
         // Only output to STDERR in CLI mode, use error_log in web context
         if (php_sapi_name() === 'cli' && defined('STDERR')) {
-            fwrite(STDERR, $normalized . PHP_EOL);
+            error_log($normalized . PHP_EOL);
             return;
         }
 

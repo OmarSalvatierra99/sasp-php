@@ -47,11 +47,24 @@ document.addEventListener("DOMContentLoaded", () => {
       uploadResult.hidden = true;
 
       try {
-        const res = await fetch(form.action, { method: "POST", body: formData });
-        const data = await res.json();
+        const res = await fetch(form.action, {
+          method: "POST",
+          body: formData,
+          headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+          }
+        });
 
         uploadStatus.hidden = true;
         uploadArea.style.display = "block";
+
+        // Check if response is JSON before parsing
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          throw new Error("Sesión expirada o no autorizada. Por favor, inicia sesión nuevamente.");
+        }
+
+        const data = await res.json();
 
         if (!res.ok || data.error)
           throw new Error(data.error || `Error del servidor (${res.status})`);
@@ -229,6 +242,13 @@ if (formSolv) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rfc, estado, valoracion, catalogo, otro_texto: otroTexto, ente })
       });
+
+      // Check if response is JSON before parsing
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Sesión expirada o no autorizada. Por favor, inicia sesión nuevamente.");
+      }
+
       const data = await res.json();
 
       if (!res.ok || data.error)

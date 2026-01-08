@@ -4,65 +4,116 @@ ob_start();
 
 $enteSel = $ente_sel ?? '';
 $catalogoOptions = [
-    '' => 'Seleccione una opción',
-    'Compatibilidad acreditada' => 'Compatibilidad acreditada',
-    'Convenio laboral' => 'Convenio laboral',
+    '' => 'Selecciona una opción...',
+    'Presentan horarios laborales autorizados y actualizados que acreditan la compatibilidad.' => 'Presentan horarios laborales autorizados y actualizados que acreditan la compatibilidad.',
+    'Remiten documentación que acredita el reintegro de los recursos observados.' => 'Remiten documentación que acredita el reintegro de los recursos observados.',
+    'Presentan la cancelación de cheques que no fueron cobrados por el servidor público observado.' => 'Presentan la cancelación de cheques que no fueron cobrados por el servidor público observado.',
+    'Documentan que el servidor público no laboró en el periodo observado, solo tuvo pagos por liquidación o indemnización.' => 'Documentan que el servidor público no laboró en el periodo observado, solo tuvo pagos por liquidación o indemnización.',
+    'Presentan permiso de horario convenido, estableciendo el horario en que se reponen las horas.' => 'Presentan permiso de horario convenido, estableciendo el horario en que se reponen las horas.',
+    'Remiten oficios de licencia con goce de sueldo.' => 'Remiten oficios de licencia con goce de sueldo.',
     'Otro' => 'Otro'
 ];
 ?>
 
 <div class="solventacion-container">
-  <header class="page-header">
-    <h2>Valoración de <?php echo htmlspecialchars((string)$rfc); ?></h2>
-    <p class="subtitle">Actualice el estado y comentarios para el ente seleccionado.</p>
+  <header class="header-flex">
+    <h2>Solventación de Posible Duplicidad</h2>
+    <span class="subtitle">Actualiza el estado de la revisión</span>
   </header>
 
-  <section class="detail-section">
-    <p><strong>Nombre:</strong> <?php echo htmlspecialchars((string)($info['nombre'] ?? '')); ?></p>
-    <p><strong>Entes involucrados:</strong> <?php echo htmlspecialchars(implode(', ', $info['entes'] ?? [])); ?></p>
-  </section>
+  <div class="info-rfc">
+    <p><strong>RFC:</strong> <?php echo htmlspecialchars((string)$rfc); ?></p>
+    <p><strong>Nombre:</strong> <?php echo htmlspecialchars((string)($info['nombre'] ?? 'Sin nombre')); ?></p>
+    <?php if ($enteSel): ?>
+    <p><strong>Ente:</strong> <?php echo htmlspecialchars($enteSel); ?></p>
+    <?php endif; ?>
+  </div>
 
-  <form id="solventacionForm" data-rfc="<?php echo htmlspecialchars((string)$rfc); ?>" method="post" action="/solventacion/<?php echo urlencode((string)$rfc); ?>">
+  <form id="solventacionForm"
+        method="post"
+        action="/solventacion/<?php echo urlencode((string)$rfc); ?>"
+        data-rfc="<?php echo htmlspecialchars((string)$rfc); ?>">
+
+    <!-- Captura el ente pasado en la URL -->
     <input type="hidden" name="ente" value="<?php echo htmlspecialchars((string)$enteSel); ?>">
 
-    <div class="form-grid">
-      <label for="estado">Estado</label>
-      <select name="estado" id="estado" required>
+    <!-- Estado de valoración -->
+    <div class="form-group">
+      <label for="estado">Estado de valoración:</label>
+      <select id="estado" name="estado" required>
         <?php
-        $estados = ['Sin valoración', 'Solventado', 'No Solventado'];
-        foreach ($estados as $estado):
-          $selected = ((string)($estado_prev ?? '') === $estado) ? 'selected' : '';
+        $estadoActual = $estado_prev ?? '';
+        $isDisabled = ($estadoActual === 'Sin valoración' || $estadoActual === '') ? 'disabled' : '';
+        $isSelected = ($estadoActual === 'Sin valoración' || $estadoActual === '') ? 'selected' : '';
         ?>
-          <option value="<?php echo htmlspecialchars($estado); ?>" <?php echo $selected; ?>>
-            <?php echo htmlspecialchars($estado); ?>
-          </option>
-        <?php endforeach; ?>
+        <option value="Sin valoración" <?php echo $isSelected; ?> <?php echo $isDisabled; ?>>
+          Sin valoración
+        </option>
+        <option value="Solventado" <?php echo ($estadoActual === 'Solventado') ? 'selected' : ''; ?>>Solventado</option>
+        <option value="No Solventado" <?php echo ($estadoActual === 'No Solventado') ? 'selected' : ''; ?>>No Solventado</option>
       </select>
+    </div>
 
-      <label for="catalogo">Catálogo de soluciones</label>
-      <select name="catalogo" id="catalogo">
+    <!-- Catálogo de Soluciones (visible solo si el estado es Solventado o No Solventado) -->
+    <div class="form-group" id="catalogoContainer" style="display: none;">
+      <label for="catalogo">Motivo de la Solventación:</label>
+      <select id="catalogo" name="catalogo" required>
         <?php foreach ($catalogoOptions as $val => $label): ?>
           <option value="<?php echo htmlspecialchars($val); ?>" <?php echo ((string)($catalogo_prev ?? '') === $val) ? 'selected' : ''; ?>>
             <?php echo htmlspecialchars($label); ?>
           </option>
         <?php endforeach; ?>
       </select>
-
-      <label for="otro_texto">Otro (especifique)</label>
-      <input type="text" name="otro_texto" id="otro_texto" value="<?php echo htmlspecialchars((string)($otro_texto_prev ?? '')); ?>" placeholder="Detalle adicional">
-
-      <label for="valoracion">Valoración / Comentarios</label>
-      <textarea name="valoracion" id="valoracion" rows="4" placeholder="Describa la justificación o hallazgo"><?php echo htmlspecialchars((string)($valoracion_prev ?? '')); ?></textarea>
     </div>
 
-    <div class="btn-area" style="margin-top: 1rem;">
-      <button type="submit" class="btn btn-primary">Guardar</button>
-      <a href="/resultados/<?php echo urlencode((string)$rfc); ?>" class="btn btn-secondary">Cancelar</a>
+    <!-- Campo Especifique Solución (solo si el catálogo = Otro) -->
+    <div class="form-group" id="otroContainer" style="display: none;">
+      <label for="otro_texto">Especifique solución:</label>
+      <textarea id="otro_texto" name="otro_texto" rows="3"
+        placeholder="Describa la solución aplicada..."><?php echo htmlspecialchars((string)($otro_texto_prev ?? '')); ?></textarea>
     </div>
 
-    <div id="confirmacion" class="alert-success" hidden></div>
+    <!-- Botones -->
+    <div class="btn-area">
+      <button type="submit" class="btn btn-primary">💾 Guardar cambios</button>
+      <a href="/resultados/<?php echo urlencode((string)$rfc); ?>" class="btn btn-secondary">← Regresar</a>
+    </div>
+
+    <p id="confirmacion" class="confirmacion"></p>
   </form>
 </div>
+
+<!-- Lógica dinámica -->
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  const estadoSelect = document.getElementById("estado");
+  const catalogoContainer = document.getElementById("catalogoContainer");
+  const catalogoSelect = document.getElementById("catalogo");
+  const otroContainer = document.getElementById("otroContainer");
+
+  function actualizarVisibilidad() {
+    const estado = estadoSelect.value;
+    if (estado === "Solventado" || estado === "No Solventado") {
+      catalogoContainer.style.display = "block";
+    } else {
+      catalogoContainer.style.display = "none";
+      otroContainer.style.display = "none";
+      catalogoSelect.value = "";
+    }
+  }
+
+  function verificarOtro() {
+    otroContainer.style.display = catalogoSelect.value === "Otro" ? "block" : "none";
+  }
+
+  estadoSelect.addEventListener("change", actualizarVisibilidad);
+  catalogoSelect.addEventListener("change", verificarOtro);
+
+  // Inicializar visibilidad correcta al cargar la página
+  actualizarVisibilidad();
+  verificarOtro();
+});
+</script>
 
 <?php
 $content = ob_get_clean();

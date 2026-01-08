@@ -148,7 +148,7 @@ class DataProcessor
     public function extraerRegistrosIndividuales(array $archivos): array
     {
         $this->refreshCatalogMaps();
-        fwrite(STDERR, sprintf("📊 Procesando %d archivo(s) laborales...\n", count($archivos)));
+        error_log(sprintf("📊 Procesando %d archivo(s) laborales...\n", count($archivos)));
 
         $registros = [];
         $alertas = [];
@@ -197,7 +197,7 @@ class DataProcessor
                 continue;
             }
 
-            fwrite(STDERR, "📘 Leyendo archivo: {$nombreArchivo}\n");
+            error_log("📘 Leyendo archivo: {$nombreArchivo}\n");
 
             // Cargar el archivo Excel
             try {
@@ -218,7 +218,7 @@ class DataProcessor
 
                 if (!$claveEnte) {
                     $alerta = "⚠️ Hoja '{$hoja}' no encontrada en catálogo de entes. Verifique el nombre.";
-                    fwrite(STDERR, $alerta . "\n");
+                    error_log($alerta . "\n");
                     $alertas[] = [
                         'tipo' => 'ente_no_encontrado',
                         'mensaje' => $alerta,
@@ -252,7 +252,7 @@ class DataProcessor
 
                 if (!empty($faltantes)) {
                     $alerta = "⚠️ Hoja '{$hoja}' omitida: faltan columnas requeridas.";
-                    fwrite(STDERR, $alerta . "\n");
+                    error_log($alerta . "\n");
                     $alertas[] = [
                         'tipo' => 'columnas_faltantes',
                         'mensaje' => $alerta,
@@ -298,11 +298,11 @@ class DataProcessor
                     $registrosValidos++;
                 }
 
-                fwrite(STDERR, "✅ Hoja '{$hoja}': {$registrosValidos} registros procesados.\n");
+                error_log("✅ Hoja '{$hoja}': {$registrosValidos} registros procesados.\n");
             }
         }
 
-        fwrite(STDERR, sprintf("📈 %d registros individuales extraídos.\n", count($registros)));
+        error_log(sprintf("📈 %d registros individuales extraídos.\n", count($registros)));
 
         return [$registros, $alertas];
     }
@@ -315,14 +315,14 @@ class DataProcessor
      */
     public function procesarArchivos(array $archivos): array
     {
-        fwrite(STDERR, sprintf("📊 Procesando %d archivo(s) laborales...\n", count($archivos)));
+        error_log(sprintf("📊 Procesando %d archivo(s) laborales...\n", count($archivos)));
 
         $entesRfc = [];
         $alertas = [];
 
         foreach ($archivos as $f) {
             $nombreArchivo = $this->getNombreArchivo($f);
-            fwrite(STDERR, "📘 Leyendo archivo: {$nombreArchivo}\n");
+            error_log("📘 Leyendo archivo: {$nombreArchivo}\n");
 
             try {
                 $filePath = $this->getFilePath($f);
@@ -342,7 +342,7 @@ class DataProcessor
 
                 if (!$claveEnte) {
                     $alerta = "⚠️ Hoja '{$hoja}' no encontrada en catálogo de entes. Verifique el nombre.";
-                    fwrite(STDERR, $alerta . "\n");
+                    error_log($alerta . "\n");
                     $alertas[] = [
                         'tipo' => 'ente_no_encontrado',
                         'mensaje' => $alerta,
@@ -373,7 +373,7 @@ class DataProcessor
 
                 if (!empty($faltantes)) {
                     $alerta = "⚠️ Hoja '{$hoja}' omitida: faltan columnas requeridas.";
-                    fwrite(STDERR, $alerta . "\n");
+                    error_log($alerta . "\n");
                     $alertas[] = [
                         'tipo' => 'columnas_faltantes',
                         'mensaje' => $alerta,
@@ -414,7 +414,7 @@ class DataProcessor
                     $registrosValidos++;
                 }
 
-                fwrite(STDERR, "✅ Hoja '{$hoja}': {$registrosValidos} registros procesados.\n");
+                error_log("✅ Hoja '{$hoja}': {$registrosValidos} registros procesados.\n");
             }
         }
 
@@ -422,7 +422,7 @@ class DataProcessor
         $sinCruce = $this->empleadosSinCruce($entesRfc, $resultados);
         $resultados = array_merge($resultados, $sinCruce);
 
-        fwrite(STDERR, sprintf("📈 %d registros totales (incluye no duplicados).\n", count($resultados)));
+        error_log(sprintf("📈 %d registros totales (incluye no duplicados).\n", count($resultados)));
 
         return [$resultados, $alertas];
     }
