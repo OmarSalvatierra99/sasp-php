@@ -118,6 +118,11 @@ class Application
             return;
         }
 
+        if ($path === '/cancelar_validacion' && $method === 'POST') {
+            $this->cancelarValidacion($request);
+            return;
+        }
+
         if (preg_match('#^/resultados/([A-Z0-9]+)$#', $path, $matches)) {
             $this->resultadosPorRfc($matches[1]);
             return;
@@ -242,6 +247,16 @@ class Application
     private function reportePorEnte(Request $request): void
     {
         $filtroEnte = trim((string)$request->query('ente', ''));
+        $ambitoSel = strtolower(trim((string)$request->query('ambito', 'estatales')));
+        if (!in_array($ambitoSel, ['estatales', 'municipios'], true)) {
+            $ambitoSel = 'estatales';
+        }
+        $validacionError = (string)$request->query('validacion_error', '') === '1';
+        $validacionErrorMsg = '';
+        if ($validacionError) {
+            $validacionErrorMsg = (string)($_SESSION['validacion_error_msg'] ?? 'No fue posible validar los datos.');
+            unset($_SESSION['validacion_error_msg']);
+        }
         $entesUsuario = $_SESSION['entes'] ?? [];
         $esLuis = $this->esUsuarioLuis();
         $resultadosValidados = $this->dbManager->resultadosValidados();
@@ -250,6 +265,7 @@ class Application
 
         $resultados = $this->filtrarDuplicadosConVisibilidad($this->dbManager->obtenerCrucesReales());
         $trabajadoresPorEnte = $this->dbManager->contarTrabajadoresPorEnte();
+        $trabajadoresDetallados = $this->dbManager->obtenerTrabajadoresPorEnte();
         $catalogo = array_merge($this->dbManager->listarEntes(), $this->dbManager->listarMunicipios());
 
         $agrupado = [];
@@ -262,6 +278,9 @@ class Application
             $tipo = strtoupper($ente['ambito'] ?? 'ENTE');
 
             if (!$this->puedeVerEnte($clave, $entesUsuario, $modoPermiso)) {
+                continue;
+            }
+            if (!$this->coincideAmbitoSeleccionado($ambitoSel, $tipo)) {
                 continue;
             }
 
@@ -293,6 +312,9 @@ class Application
 
                     $display = $this->enteDisplay($enteClave);
                     if ($filtroEnte && $display !== $filtroEnte) {
+                        continue;
+                    }
+                    if (!isset($entesInfo[$display])) {
                         continue;
                     }
 
@@ -345,13 +367,130 @@ class Application
             $agrupadoFinal[$k] = array_values($v);
         }
 
+        $trabajadoresPorEnteFinal = [];
+        $rfcProcesados = [];
+        $registrosCargados = 0;
+        foreach ($trabajadoresDetallados as $enteClave => $trabajadores) {
+            if (!$this->puedeVerEnte((string)$enteClave, $entesUsuario, $modoPermiso)) {
+                continue;
+            }
+            if (!$this->coincideAmbitoSeleccionado($ambitoSel, $this->tipoEnte((string)$enteClave))) {
+                continue;
+            }
+
+            $display = $this->enteDisplay((string)$enteClave);
+            if ($filtroEnte && $display !== $filtroEnte) {
+                continue;
+            }
+
+            foreach ($trabajadores as $trab) {
+                $trabajadoresPorEnteFinal[$display][] = $trab;
+                $rfc = strtoupper(trim((string)($trab['rfc'] ?? '')));
+                if ($rfc !== '') {
+                    $rfcProcesados[$rfc] = true;
+                }
+                $registrosCargados++;
+            }
+        }
+
+        $rfcDuplicados = [];
+        foreach ($resultados as $r) {
+            $entesVisibles = [];
+            foreach (($r['entes'] ?? []) as $enteCruce) {
+                if ($this->puedeVerEnte((string)$enteCruce, $entesUsuario, $modoPermiso)) {
+                    if (!$this->coincideAmbitoSeleccionado($ambitoSel, $this->tipoEnte((string)$enteCruce))) {
+                        continue;
+                    }
+                    $entesVisibles[] = (string)$enteCruce;
+                }
+            }
+            $entesVisibles = array_values(array_unique($entesVisibles));
+            if (count($entesVisibles) < 2) {
+                continue;
+            }
+
+            if ($filtroEnte !== '') {
+                $incluyeFiltro = false;
+                foreach ($entesVisibles as $enteCruce) {
+                    if ($this->enteDisplay($enteCruce) === $filtroEnte) {
+                        $incluyeFiltro = true;
+                        break;
+                    }
+                }
+                if (!$incluyeFiltro) {
+                    continue;
+                }
+            }
+
+            $rfc = strtoupper(trim((string)($r['rfc'] ?? '')));
+            if ($rfc !== '') {
+                $rfcDuplicados[$rfc] = true;
+            }
+        }
+
+        $entesVisibles = 0;
+        foreach ($entesInfo as $nombreEnte => $_info) {
+            if ($filtroEnte && $nombreEnte !== $filtroEnte) {
+                continue;
+            }
+            $entesVisibles++;
+        }
+
+        $trabajadoresProcesados = count($rfcProcesados);
+        $duplicadosDetectados = count($rfcDuplicados);
+        $indiceDuplicidad = $trabajadoresProcesados > 0
+            ? round(($duplicadosDetectados / $trabajadoresProcesados) * 100, 2)
+            : 0.0;
+        $promedioRegistrosPorEnte = $entesVisibles > 0
+            ? round($registrosCargados / $entesVisibles, 2)
+            : 0.0;
+
+        $entesConDuplicidad = 0;
+        foreach ($entesInfo as $nombreEnte => $infoEnte) {
+            if ($filtroEnte && $nombreEnte !== $filtroEnte) {
+                continue;
+            }
+            if ((int)($infoEnte['duplicados'] ?? 0) > 0) {
+                $entesConDuplicidad++;
+            }
+        }
+
+        $entesSinDuplicidad = max(0, $entesVisibles - $entesConDuplicidad);
+        $coberturaEntes = $entesVisibles > 0
+            ? round(($entesConDuplicidad / $entesVisibles) * 100, 2)
+            : 0.0;
+
+        $resumenAuditoria = [
+            ['m' => 'Fecha de corte', 'v' => date('Y-m-d H:i:s')],
+            ['m' => 'Estado de validación', 'v' => $resultadosValidados ? 'Validados' : 'Borrador'],
+            ['m' => 'Entes analizados', 'v' => (string)$entesVisibles],
+            ['m' => 'Entes con duplicidad', 'v' => (string)$entesConDuplicidad],
+            ['m' => 'Entes sin duplicidad', 'v' => (string)$entesSinDuplicidad],
+            ['m' => 'Trabajadores analizados (RFC únicos)', 'v' => (string)$trabajadoresProcesados],
+            ['m' => 'Casos de duplicidad (RFC únicos)', 'v' => (string)$duplicadosDetectados],
+            ['m' => 'Índice de duplicidad', 'v' => number_format($indiceDuplicidad, 2) . '%'],
+            ['m' => 'Cobertura de riesgo por ente', 'v' => number_format($coberturaEntes, 2) . '%'],
+            ['m' => 'Promedio de registros por ente', 'v' => number_format($promedioRegistrosPorEnte, 2)]
+        ];
+
         $this->render('resultados.php', [
             'resultados' => $agrupadoFinal,
+            'trabajadores_por_ente' => $trabajadoresPorEnteFinal,
             'entes_info' => $entesInfo,
             'filtro_ente' => $filtroEnte,
+            'ambito_sel' => $ambitoSel,
             'es_luis' => $esLuis,
             'resultados_validados' => $resultadosValidados,
-            'mostrar_duplicados' => $mostrarDuplicados
+            'mostrar_duplicados' => $mostrarDuplicados,
+            'validacion_error' => $validacionError,
+            'validacion_error_msg' => $validacionErrorMsg,
+            'resumen_auditoria' => $resumenAuditoria,
+            'resumen' => [
+                'entes_visibles' => $entesVisibles,
+                'registros_cargados' => $registrosCargados,
+                'trabajadores_procesados' => count($rfcProcesados),
+                'duplicados_detectados' => count($rfcDuplicados)
+            ]
         ]);
     }
 
@@ -502,7 +641,12 @@ class Application
             return;
         }
 
-        if (in_array($estado, ['Solventado', 'No Solventado'], true) && $catalogo === '') {
+        if (!in_array($estado, ['Sin valoración', 'Solventado'], true)) {
+            $this->jsonResponse(['error' => 'Estado de pre-validación no permitido'], 400);
+            return;
+        }
+
+        if ($estado === 'Solventado' && $catalogo === '') {
             $this->jsonResponse(['error' => 'Selecciona una opción de catálogo'], 400);
             return;
         }
@@ -538,8 +682,57 @@ class Application
             return;
         }
 
-        $this->dbManager->marcarResultadosValidados((string)($_SESSION['usuario'] ?? 'luis'));
-        $this->redirect('/resultados');
+        try {
+            $this->dbManager->marcarResultadosValidados((string)($_SESSION['usuario'] ?? 'luis'));
+            $this->redirect('/resultados');
+        } catch (\Throwable $e) {
+            error_log("Error al validar datos: {$e->getMessage()}");
+            if ($request->isAjax()) {
+                $this->jsonResponse(['error' => 'No fue posible validar los datos.'], 500);
+                return;
+            }
+            $_SESSION['validacion_error_msg'] = $this->buildValidacionErrorMessage($e, 'validar');
+            $this->redirect('/resultados?validacion_error=1');
+        }
+    }
+
+    private function cancelarValidacion(Request $request): void
+    {
+        if (!$this->esUsuarioLuis()) {
+            $this->jsonResponse(['error' => 'No autorizado'], 403);
+            return;
+        }
+
+        try {
+            $this->dbManager->desmarcarResultadosValidados((string)($_SESSION['usuario'] ?? 'luis'));
+            $this->redirect('/resultados');
+        } catch (\Throwable $e) {
+            error_log("Error al cancelar validación: {$e->getMessage()}");
+            if ($request->isAjax()) {
+                $this->jsonResponse(['error' => 'No fue posible cancelar la validación.'], 500);
+                return;
+            }
+            $_SESSION['validacion_error_msg'] = $this->buildValidacionErrorMessage($e, 'cancelar');
+            $this->redirect('/resultados?validacion_error=1');
+        }
+    }
+
+    private function buildValidacionErrorMessage(\Throwable $e, string $accion): string
+    {
+        $msg = strtolower($e->getMessage());
+        $dbPath = $this->dbManager->getDbPath();
+        $base = $accion === 'cancelar'
+            ? 'No fue posible cancelar la validación.'
+            : 'No fue posible validar los datos.';
+
+        if (str_contains($msg, 'readonly') || str_contains($msg, 'attempt to write a readonly database')) {
+            $writable = is_writable($dbPath) ? 'sí' : 'no';
+            $dirPath = dirname($dbPath);
+            $dirWritable = is_writable($dirPath) ? 'sí' : 'no';
+            return "{$base} SQLite está en solo lectura. DB: {$dbPath}. ¿DB escribible?: {$writable}. ¿Carpeta escribible?: {$dirWritable}.";
+        }
+
+        return "{$base} Error técnico: {$e->getMessage()}";
     }
 
     private function exportarPorEnte(Request $request): void
@@ -777,6 +970,21 @@ class Application
 
         self::$entesCache = $data;
         return $data;
+    }
+
+    private function tipoEnte(string $enteClave): string
+    {
+        $info = $this->entesCache()[$this->sanitizeText($enteClave)] ?? [];
+        return strtoupper((string)($info['tipo'] ?? 'ENTE'));
+    }
+
+    private function coincideAmbitoSeleccionado(string $ambitoSel, string $tipoEnte): bool
+    {
+        $tipo = strtoupper(trim($tipoEnte));
+        if ($ambitoSel === 'municipios') {
+            return str_contains($tipo, 'MUNIC');
+        }
+        return !str_contains($tipo, 'MUNIC');
     }
 
     private function puedeVerEnte(string $enteClave, array $entesUsuario, ?string $modoPermiso = null): bool

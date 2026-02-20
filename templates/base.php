@@ -6,6 +6,9 @@
   <title><?php echo $title ?? 'SASP - Sistema de Auditoría de Servicios Personales'; ?></title>
 
   <!-- Recursos globales -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,500;8..60,700&display=swap" rel="stylesheet">
   <link rel="icon" href="/img/ofs_logo.png" type="image/png">
   <link rel="stylesheet" href="/css/style.css">
   <script defer src="/js/main.js"></script>

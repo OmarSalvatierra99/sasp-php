@@ -39,6 +39,15 @@ class DatabaseManagerValidationFlowTest extends TestCase
         $this->assertTrue($db->resultadosValidados());
     }
 
+    public function testDesmarcarResultadosValidadosSetsFalseAgain(): void
+    {
+        $db = new DatabaseManager($this->dbPath);
+        $db->marcarResultadosValidados('luis');
+        $db->desmarcarResultadosValidados('luis');
+
+        $this->assertFalse($db->resultadosValidados());
+    }
+
     public function testGuardarPrevalidacionDuplicadoIsReturnedByGetPrevalidaciones(): void
     {
         $db = new DatabaseManager($this->dbPath);

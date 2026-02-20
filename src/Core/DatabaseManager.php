@@ -93,6 +93,11 @@ class DatabaseManager
         return $this->connect();
     }
 
+    public function getDbPath(): string
+    {
+        return $this->dbPath;
+    }
+
     /**
      * Inicializa las tablas de la base de datos
      */
@@ -681,6 +686,54 @@ class DatabaseManager
     }
 
     /**
+     * Obtiene trabajadores agrupados por ente para vistas de consulta/auditoría.
+     *
+     * @return array<string, array<int, array{
+     *   rfc:string,
+     *   nombre:string,
+     *   puesto:string,
+     *   fecha_ingreso:?string,
+     *   fecha_egreso:?string,
+     *   monto:float|int|string|null,
+     *   qnas:array<string, mixed>
+     * }>>
+     */
+    public function obtenerTrabajadoresPorEnte(): array
+    {
+        $conn = $this->connect();
+        $stmt = $conn->query("
+            SELECT ente, rfc, nombre, puesto, fecha_ingreso, fecha_egreso, monto, qnas
+            FROM registros_laborales
+            ORDER BY ente, nombre, rfc
+        ");
+
+        $resultado = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $ente = (string)($row['ente'] ?? '');
+            if ($ente === '') {
+                continue;
+            }
+
+            $qnas = json_decode((string)($row['qnas'] ?? '{}'), true);
+            if (!is_array($qnas)) {
+                $qnas = [];
+            }
+
+            $resultado[$ente][] = [
+                'rfc' => (string)($row['rfc'] ?? ''),
+                'nombre' => (string)($row['nombre'] ?? ''),
+                'puesto' => (string)($row['puesto'] ?? ''),
+                'fecha_ingreso' => $row['fecha_ingreso'] ?? null,
+                'fecha_egreso' => $row['fecha_egreso'] ?? null,
+                'monto' => $row['monto'] ?? null,
+                'qnas' => $qnas
+            ];
+        }
+
+        return $resultado;
+    }
+
+    /**
      * Detecta empleados que están activos en más de un ente durante la misma QNA
      *
      * @return array<int, array<string, mixed>>
@@ -1083,6 +1136,20 @@ class DatabaseManager
             VALUES ('validacion_resultados', 'validados', ?)
             ON CONFLICT(clave) DO UPDATE SET
                 valor='validados',
+                actualizado=CURRENT_TIMESTAMP,
+                actualizado_por=excluded.actualizado_por
+        ");
+        $stmt->execute([$usuario]);
+    }
+
+    public function desmarcarResultadosValidados(string $usuario): void
+    {
+        $conn = $this->connect();
+        $stmt = $conn->prepare("
+            INSERT INTO workflow_estado (clave, valor, actualizado_por)
+            VALUES ('validacion_resultados', 'borrador', ?)
+            ON CONFLICT(clave) DO UPDATE SET
+                valor='borrador',
                 actualizado=CURRENT_TIMESTAMP,
                 actualizado_por=excluded.actualizado_por
         ");

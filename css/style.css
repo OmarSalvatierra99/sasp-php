@@ -1479,6 +1479,190 @@ footer p {
   display: inline-block;
 }
 
+/* =========================================================
+   VISUAL REFINEMENT OVERRIDES
+   ========================================================= */
+:root {
+  --color-background: #f2f5f9;
+  --color-surface: #f8fbff;
+  --color-text: #1d2734;
+  --color-muted: #5f6b7a;
+}
+
+body {
+  font-family: "Manrope", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 10% -10%, rgba(0, 70, 168, 0.10), transparent 35%),
+    radial-gradient(circle at 90% 0%, rgba(2, 132, 199, 0.08), transparent 36%),
+    var(--color-background);
+}
+
+.nav-system,
+.header-flex h2,
+.page-header h2,
+.login-title {
+  font-family: "Source Serif 4", Georgia, serif;
+  letter-spacing: 0.01em;
+}
+
+.navbar {
+  background: linear-gradient(100deg, #001e45 0%, #002f63 55%, #0a3f7c 100%);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.nav-container {
+  padding: var(--space-3) var(--space-6);
+}
+
+.nav-brand {
+  gap: var(--space-4);
+}
+
+.nav-logo {
+  width: 62px;
+  height: 62px;
+  object-fit: contain;
+  padding: 6px;
+  background: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  border-radius: 14px;
+  box-shadow: 0 8px 18px rgba(2, 12, 27, 0.24);
+}
+
+.nav-title {
+  max-width: min(62vw, 760px);
+}
+
+.nav-system {
+  font-size: 1.35rem;
+}
+
+.nav-subtitle {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.nav-org {
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.nav-link {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.nav-link:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.main-content {
+  max-width: 1480px;
+}
+
+.report-container,
+.dashboard,
+.detalle-container,
+.catalogos {
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(0, 40, 85, 0.08);
+  backdrop-filter: blur(8px);
+  border-radius: 20px;
+  padding: var(--space-6);
+  box-shadow: 0 16px 38px rgba(7, 26, 54, 0.08);
+}
+
+.export-bar,
+.detalle-header,
+.upload-section,
+.solventacion-container {
+  border-radius: 16px;
+}
+
+.tabla,
+.tabla-resultados,
+.tabla-detalle {
+  border: 1px solid #d7e0ea;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.tabla th,
+.tabla-resultados th,
+.tabla-detalle th {
+  background: linear-gradient(180deg, #f7fbff 0%, #edf3fb 100%);
+  color: #334155;
+}
+
+.tabla tr:nth-child(even) td,
+.tabla-resultados tr:nth-child(even) td,
+.tabla-detalle tr:nth-child(even) td {
+  background: #fbfdff;
+}
+
+.badge {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+footer {
+  background: linear-gradient(100deg, #001e45 0%, #00366f 100%);
+}
+
+.doble-tab-bar {
+  display: inline-flex;
+  gap: var(--space-2);
+  background: #e8eef6;
+  border: 1px solid #c9d6e6;
+  padding: 6px;
+  border-radius: 999px;
+}
+
+.tab-link {
+  text-decoration: none;
+  color: #274c77;
+  font-weight: 700;
+  font-size: var(--text-sm);
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  transition: var(--transition);
+}
+
+.tab-link:hover {
+  background: #d8e5f4;
+}
+
+.tab-link.active {
+  background: #ffffff;
+  color: #0b2e59;
+  box-shadow: 0 2px 6px rgba(13, 35, 65, 0.16);
+}
+
+@media (max-width: 768px) {
+  .nav-logo {
+    width: 52px;
+    height: 52px;
+  }
+
+  .nav-title {
+    max-width: 100%;
+  }
+
+  .nav-subtitle,
+  .nav-org {
+    text-wrap: balance;
+  }
+
+  .report-container,
+  .dashboard,
+  .detalle-container,
+  .catalogos {
+    padding: var(--space-4);
+    border-radius: 14px;
+  }
+}
+
 .btn-action.btn-primary {
   background: var(--color-primary);
   color: white;
@@ -1691,4 +1875,3 @@ footer p {
     flex-direction: column;
   }
 }
-

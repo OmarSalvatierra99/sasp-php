@@ -37,10 +37,39 @@ ob_start();
     <?php endif; ?>
   </header>
 
+  <?php if (!empty($validacion_error)): ?>
+    <div class="badge badge-danger" style="display: block; padding: var(--space-6); margin-bottom: var(--space-6);">
+      <?php echo htmlspecialchars((string)($validacion_error_msg ?? 'No fue posible validar los datos.')); ?>
+    </div>
+  <?php endif; ?>
+
+  <section style="margin-bottom:var(--space-6);">
+    <h3 style="margin:0 0 var(--space-4);">Resumen de Auditoría</h3>
+    <table class="tabla-resultados">
+      <thead>
+        <tr>
+          <th>Métrica</th>
+          <th>Valor</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach (($resumen_auditoria ?? []) as $fila): ?>
+          <tr>
+            <td><strong><?php echo htmlspecialchars((string)($fila['m'] ?? '')); ?></strong></td>
+            <td><?php echo htmlspecialchars((string)($fila['v'] ?? '')); ?></td>
+          </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </section>
+
   <?php if (!empty($es_luis)): ?>
     <div class="export-bar" style="margin-bottom: 1rem;">
       <?php if (!empty($resultados_validados)): ?>
         <span class="badge badge-success">✓ Datos validados y visibles para todos</span>
+        <form method="post" action="/cancelar_validacion" class="form-inline" onsubmit="return confirm('¿Cancelar validación y regresar a borrador?');">
+          <button type="submit" class="btn btn-secondary">Cancelar validación</button>
+        </form>
       <?php else: ?>
         <form method="post" action="/validar_datos" class="form-inline">
           <button type="submit" class="btn btn-primary">Validar datos</button>
@@ -50,17 +79,25 @@ ob_start();
     </div>
   <?php endif; ?>
 
-  <?php if (empty($mostrar_duplicados)): ?>
-    <div class="badge badge-info" style="display: block; padding: var(--space-6); margin-bottom: var(--space-6);">
-      Solo se muestran trabajadores procesados. Los duplicados se habilitan cuando Luis valide los datos.
-    </div>
-  <?php endif; ?>
+  <div class="doble-tab-bar" style="margin-bottom: var(--space-6);">
+    <a class="tab-link <?php echo (($ambito_sel ?? 'estatales') === 'estatales') ? 'active' : ''; ?>" href="/resultados?ambito=estatales">
+      Estatales
+    </a>
+    <a class="tab-link <?php echo (($ambito_sel ?? 'estatales') === 'municipios') ? 'active' : ''; ?>" href="/resultados?ambito=municipios">
+      Municipios
+    </a>
+  </div>
 
   <div class="export-bar">
     <form id="filterForm" method="get" class="form-inline" action="/resultados">
-      <label for="selectEnte">Filtrar por ente:</label>
+      <input type="hidden" name="ambito" value="<?php echo htmlspecialchars((string)($ambito_sel ?? 'estatales')); ?>">
+      <label for="selectEnte">
+        Filtrar por <?php echo (($ambito_sel ?? 'estatales') === 'municipios') ? 'municipio' : 'ente estatal'; ?>:
+      </label>
       <select name="ente" id="selectEnte">
-        <option value="">Todos los entes</option>
+        <option value="">
+          <?php echo (($ambito_sel ?? 'estatales') === 'municipios') ? 'Todos los municipios' : 'Todos los entes estatales'; ?>
+        </option>
         <?php foreach ($entes_info as $enteNombre => $info): ?>
           <option value="<?php echo htmlspecialchars($enteNombre); ?>" <?php echo ($filtro_ente ?? '') === $enteNombre ? 'selected' : ''; ?>>
             <?php echo htmlspecialchars($enteNombre); ?>
@@ -81,6 +118,7 @@ ob_start();
           continue;
       }
       $lista = $resultados[$enteNombre] ?? [];
+      $listaTrabajadores = $trabajadores_por_ente[$enteNombre] ?? [];
       $tieneDuplicados = !empty($mostrar_duplicados) && count($lista) > 0;
       ?>
       <section class="ente-bloque acordeon" data-tipo="<?php echo htmlspecialchars((string)$info['tipo']); ?>">
@@ -157,11 +195,10 @@ ob_start();
                           <select name="pre_estado" class="pre-estado" style="width:100%;">
                             <option value="Sin valoración" <?php echo ($preEstado === 'Sin valoración') ? 'selected' : ''; ?>>Sin valoración</option>
                             <option value="Solventado" <?php echo ($preEstado === 'Solventado') ? 'selected' : ''; ?>>Solventado</option>
-                            <option value="No Solventado" <?php echo ($preEstado === 'No Solventado') ? 'selected' : ''; ?>>No Solventado</option>
                           </select>
 
-                          <div class="pre-catalogo-wrap" style="<?php echo in_array($preEstado, ['Solventado', 'No Solventado'], true) ? '' : 'display:none;'; ?>">
-                            <label style="display:block; font-size:.85rem; margin-top:.35rem;">Catálogo</label>
+                          <div class="pre-catalogo-wrap" style="<?php echo ($preEstado === 'Solventado') ? '' : 'display:none;'; ?>">
+                            <label style="display:block; font-size:.85rem; margin-top:.35rem;">Solventación</label>
                             <select name="pre_catalogo" class="pre-catalogo" style="width:100%;">
                               <?php foreach ($preCatalogoOpciones as $val => $label): ?>
                                 <option value="<?php echo htmlspecialchars($val); ?>" <?php echo ((string)($r['pre_catalogo'] ?? '') === $val) ? 'selected' : ''; ?>>
@@ -176,9 +213,6 @@ ob_start();
                             <textarea name="pre_otro_texto" class="pre-otro-texto" rows="2" style="width:100%;"><?php echo htmlspecialchars((string)($r['pre_otro_texto'] ?? '')); ?></textarea>
                           </div>
 
-                          <label style="display:block; font-size:.85rem; margin-top:.35rem;">Comentario</label>
-                          <textarea name="pre_valoracion" rows="2" style="width:100%;"><?php echo htmlspecialchars((string)($r['pre_valoracion'] ?? '')); ?></textarea>
-
                           <button type="submit" class="btn btn-secondary" style="margin-top:.35rem;">Guardar</button>
                           <small class="prevalidacion-msg" style="display:block;"></small>
                         </form>
@@ -188,15 +222,55 @@ ob_start();
                 <?php endforeach; ?>
               </tbody>
             </table>
+          <?php endif; ?>
+
+          <div style="margin: var(--space-5) 0 var(--space-3); font-weight: 600;">
+            Trabajadores cargados en este ente
+          </div>
+          <?php if (!empty($listaTrabajadores)): ?>
+            <table class="tabla-resultados">
+              <thead>
+                <tr>
+                  <th>RFC</th>
+                  <th>Nombre</th>
+                  <th>Puesto</th>
+                  <th>Total Percepciones</th>
+                  <th>Quincenas</th>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($listaTrabajadores as $trab): ?>
+                  <?php
+                    $qnasTrab = array_keys((array)($trab['qnas'] ?? []));
+                    $qnasLabel = empty($qnasTrab) ? '-' : implode(', ', $qnasTrab);
+                  ?>
+                  <tr>
+                    <td>
+                      <?php if (!empty($trab['rfc'])): ?>
+                        <a class="link-rfc" href="/resultados/<?php echo urlencode((string)$trab['rfc']); ?>">
+                          <?php echo htmlspecialchars((string)$trab['rfc']); ?>
+                        </a>
+                      <?php else: ?>
+                        Sin RFC
+                      <?php endif; ?>
+                    </td>
+                    <td><?php echo htmlspecialchars((string)($trab['nombre'] ?? 'Sin nombre')); ?></td>
+                    <td><?php echo htmlspecialchars((string)($trab['puesto'] ?? 'Sin puesto')); ?></td>
+                    <td>
+                      <?php if (!empty($trab['monto'])): ?>
+                        MXN <?php echo number_format((float)$trab['monto'], 2); ?>
+                      <?php else: ?>
+                        -
+                      <?php endif; ?>
+                    </td>
+                    <td><?php echo htmlspecialchars($qnasLabel); ?></td>
+                  </tr>
+                <?php endforeach; ?>
+              </tbody>
+            </table>
           <?php else: ?>
-            <div class="badge badge-success" style="display: block; padding: var(--space-6); margin: var(--space-4);">
-              <strong>
-                <?php if (!empty($mostrar_duplicados)): ?>
-                  ✓ Este ente no presenta duplicidades
-                <?php else: ?>
-                  ✓ Sin duplicados visibles en esta etapa
-                <?php endif; ?>
-              </strong>
+            <div class="badge badge-neutral" style="display:block; padding:var(--space-6); margin:var(--space-4);">
+              Sin trabajadores cargados para este ente.
             </div>
           <?php endif; ?>
         </div>

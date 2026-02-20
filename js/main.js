@@ -186,7 +186,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function syncPreFormVisibility() {
       const estado = estadoEl ? estadoEl.value : "Sin valoración";
-      const muestraCatalogo = estado === "Solventado" || estado === "No Solventado";
+      const muestraCatalogo = estado === "Solventado";
       if (catalogoWrap) catalogoWrap.style.display = muestraCatalogo ? "" : "none";
 
       const muestraOtro = muestraCatalogo && catalogoEl && catalogoEl.value === "Otro";
@@ -213,14 +213,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const estado = form.querySelector('select[name="pre_estado"]')?.value || "Sin valoración";
       const catalogo = form.querySelector('select[name="pre_catalogo"]')?.value || "";
       const otroTexto = form.querySelector('textarea[name="pre_otro_texto"]')?.value?.trim() || "";
-      const valoracion = form.querySelector('textarea[name="pre_valoracion"]')?.value?.trim() || "";
 
       if (!rfc || !ente) {
         if (msg) msg.textContent = "Faltan datos RFC/ente.";
         return;
       }
 
-      if ((estado === "Solventado" || estado === "No Solventado") && !catalogo) {
+      if (estado === "Solventado" && !catalogo) {
         if (msg) msg.textContent = "Selecciona una opción de catálogo.";
         return;
       }
@@ -239,7 +238,6 @@ document.addEventListener("DOMContentLoaded", () => {
             rfc,
             ente,
             estado,
-            valoracion,
             catalogo,
             otro_texto: otroTexto
           })
@@ -299,7 +297,8 @@ if (formSolv) {
     e.preventDefault();
     const rfc = formSolv.dataset.rfc;
     const estado = document.getElementById("estado").value;
-    const valoracion = document.getElementById("valoracion").value.trim();
+    const valoracionEl = document.getElementById("valoracion");
+    const valoracion = valoracionEl ? valoracionEl.value.trim() : "";
     const catalogo = document.getElementById("catalogo").value;
     const otroTexto = document.getElementById("otro_texto").value.trim();
     const ente = document.querySelector('input[name="ente"]')?.value || null;
