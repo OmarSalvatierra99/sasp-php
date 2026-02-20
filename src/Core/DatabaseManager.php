@@ -171,6 +171,23 @@ class DatabaseManager
                     UNIQUE(rfc, ente)
                 );
 
+                CREATE TABLE IF NOT EXISTS prevalidaciones_historial (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rfc TEXT NOT NULL,
+                    ente TEXT NOT NULL,
+                    estado_anterior TEXT,
+                    comentario_anterior TEXT,
+                    catalogo_anterior TEXT,
+                    otro_texto_anterior TEXT,
+                    estado_nuevo TEXT,
+                    comentario_nuevo TEXT,
+                    catalogo_nuevo TEXT,
+                    otro_texto_nuevo TEXT,
+                    accion TEXT NOT NULL DEFAULT 'actualizacion',
+                    usuario TEXT,
+                    creado TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
                 CREATE TABLE IF NOT EXISTS entes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     num TEXT NOT NULL,
@@ -959,6 +976,63 @@ class DatabaseManager
     }
 
     /**
+     * Obtiene los entes de un RFC que tienen cruce real de quincenas entre sí.
+     *
+     * @return array<int, string>
+     */
+    public function obtenerEntesConCrucePorRfc(string $rfc): array
+    {
+        $rfc = strtoupper(trim($rfc));
+        if ($rfc === '') {
+            return [];
+        }
+
+        $conn = $this->connect();
+        $stmt = $conn->prepare("
+            SELECT ente, qnas
+            FROM registros_laborales
+            WHERE UPPER(rfc) = UPPER(?)
+            ORDER BY ente
+        ");
+        $stmt->execute([$rfc]);
+        $rows = $stmt->fetchAll();
+        if (count($rows) < 2) {
+            return [];
+        }
+
+        $qnasPorEnte = [];
+        foreach ($rows as $row) {
+            $ente = (string)($row['ente'] ?? '');
+            if ($ente === '') {
+                continue;
+            }
+            $qnas = json_decode((string)($row['qnas'] ?? '{}'), true);
+            if (!is_array($qnas)) {
+                $qnas = [];
+            }
+            $qnasPorEnte[$ente] = array_keys($qnas);
+        }
+
+        $entesList = array_keys($qnasPorEnte);
+        $entesConCruce = [];
+        for ($i = 0; $i < count($entesList); $i++) {
+            for ($j = $i + 1; $j < count($entesList); $j++) {
+                $e1 = $entesList[$i];
+                $e2 = $entesList[$j];
+                $interseccion = array_intersect($qnasPorEnte[$e1] ?? [], $qnasPorEnte[$e2] ?? []);
+                if (!empty($interseccion)) {
+                    $entesConCruce[$e1] = true;
+                    $entesConCruce[$e2] = true;
+                }
+            }
+        }
+
+        $out = array_keys($entesConCruce);
+        sort($out);
+        return $out;
+    }
+
+    /**
      * Obtiene solventaciones por RFC
      *
      * @return array<string, array<string, string>>
@@ -978,6 +1052,48 @@ class DatabaseManager
             $data[$row['ente']] = [
                 'estado' => $row['estado'],
                 'comentario' => $row['comentario']
+            ];
+        }
+
+        return $data;
+    }
+
+    /**
+     * Obtiene solventaciones para múltiples RFC en una sola consulta.
+     *
+     * @param array<int, string> $rfcs
+     * @return array<string, array<string, array<string, string>>>
+     */
+    public function getSolventacionesPorRfcs(array $rfcs): array
+    {
+        $rfcs = array_values(array_filter(array_map(
+            static fn($rfc): string => strtoupper(trim((string)$rfc)),
+            $rfcs
+        ), static fn(string $rfc): bool => $rfc !== ''));
+
+        if ($rfcs === []) {
+            return [];
+        }
+
+        $conn = $this->connect();
+        $placeholders = implode(',', array_fill(0, count($rfcs), '?'));
+        $stmt = $conn->prepare("
+            SELECT rfc, ente, estado, comentario
+            FROM solventaciones
+            WHERE rfc IN ($placeholders)
+        ");
+        $stmt->execute($rfcs);
+
+        $data = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $rfc = (string)($row['rfc'] ?? '');
+            $ente = (string)($row['ente'] ?? '');
+            if ($rfc === '' || $ente === '') {
+                continue;
+            }
+            $data[$rfc][$ente] = [
+                'estado' => (string)($row['estado'] ?? 'Sin valoración'),
+                'comentario' => (string)($row['comentario'] ?? '')
             ];
         }
 
@@ -1035,22 +1151,67 @@ class DatabaseManager
         $enteNorm = $this->normalizarEnteClave($ente) ?? $ente;
 
         $conn = $this->connect();
-        $stmt = $conn->prepare("
-            INSERT INTO prevalidaciones
-                (rfc, ente, estado, comentario, catalogo, otro_texto, actualizado, usuario)
-            VALUES
-                (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
-            ON CONFLICT(rfc, ente) DO UPDATE SET
-                estado=excluded.estado,
-                comentario=excluded.comentario,
-                catalogo=excluded.catalogo,
-                otro_texto=excluded.otro_texto,
-                actualizado=CURRENT_TIMESTAMP,
-                usuario=excluded.usuario
-        ");
-        $stmt->execute([$rfc, $enteNorm, $estado, $comentario, $catalogo, $otroTexto, $usuario]);
+        $conn->beginTransaction();
+        try {
+            $prevStmt = $conn->prepare("
+                SELECT estado, comentario, catalogo, otro_texto
+                FROM prevalidaciones
+                WHERE rfc = ? AND ente = ?
+                LIMIT 1
+            ");
+            $prevStmt->execute([$rfc, $enteNorm]);
+            $prev = $prevStmt->fetch() ?: null;
 
-        return $stmt->rowCount();
+            $stmt = $conn->prepare("
+                INSERT INTO prevalidaciones
+                    (rfc, ente, estado, comentario, catalogo, otro_texto, actualizado, usuario)
+                VALUES
+                    (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+                ON CONFLICT(rfc, ente) DO UPDATE SET
+                    estado=excluded.estado,
+                    comentario=excluded.comentario,
+                    catalogo=excluded.catalogo,
+                    otro_texto=excluded.otro_texto,
+                    actualizado=CURRENT_TIMESTAMP,
+                    usuario=excluded.usuario
+            ");
+            $stmt->execute([$rfc, $enteNorm, $estado, $comentario, $catalogo, $otroTexto, $usuario]);
+
+            $histStmt = $conn->prepare("
+                INSERT INTO prevalidaciones_historial
+                    (rfc, ente,
+                     estado_anterior, comentario_anterior, catalogo_anterior, otro_texto_anterior,
+                     estado_nuevo, comentario_nuevo, catalogo_nuevo, otro_texto_nuevo,
+                     accion, usuario)
+                VALUES
+                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $histStmt->execute([
+                $rfc,
+                $enteNorm,
+                $prev['estado'] ?? null,
+                $prev['comentario'] ?? null,
+                $prev['catalogo'] ?? null,
+                $prev['otro_texto'] ?? null,
+                $estado,
+                $comentario,
+                $catalogo,
+                $otroTexto,
+                $estado === 'Sin valoración' ? 'cancelar_solventacion' : 'solventar',
+                $usuario
+            ]);
+
+            $conn->commit();
+            return $stmt->rowCount();
+        } catch (\Throwable $e) {
+            if ($conn->inTransaction()) {
+                $conn->rollBack();
+            }
+            if ($e instanceof PDOException && $this->isMissingTableError($e, 'prevalidaciones_historial')) {
+                throw $e;
+            }
+            throw $e;
+        }
     }
 
     /**
@@ -1076,6 +1237,57 @@ class DatabaseManager
         $data = [];
         foreach ($stmt->fetchAll() as $row) {
             $data[$row['ente']] = [
+                'estado' => (string)($row['estado'] ?? 'Sin valoración'),
+                'comentario' => (string)($row['comentario'] ?? ''),
+                'catalogo' => (string)($row['catalogo'] ?? ''),
+                'otro_texto' => (string)($row['otro_texto'] ?? '')
+            ];
+        }
+
+        return $data;
+    }
+
+    /**
+     * Obtiene prevalidaciones para múltiples RFC en una sola consulta.
+     *
+     * @param array<int, string> $rfcs
+     * @return array<string, array<string, array{estado:string, comentario:string, catalogo:string, otro_texto:string}>>
+     */
+    public function getPrevalidacionesPorRfcs(array $rfcs): array
+    {
+        $rfcs = array_values(array_filter(array_map(
+            static fn($rfc): string => strtoupper(trim((string)$rfc)),
+            $rfcs
+        ), static fn(string $rfc): bool => $rfc !== ''));
+
+        if ($rfcs === []) {
+            return [];
+        }
+
+        $conn = $this->connect();
+        $placeholders = implode(',', array_fill(0, count($rfcs), '?'));
+        try {
+            $stmt = $conn->prepare("
+                SELECT rfc, ente, estado, comentario, catalogo, otro_texto
+                FROM prevalidaciones
+                WHERE rfc IN ($placeholders)
+            ");
+            $stmt->execute($rfcs);
+        } catch (PDOException $e) {
+            if ($this->isMissingTableError($e, 'prevalidaciones')) {
+                return [];
+            }
+            throw $e;
+        }
+
+        $data = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $rfc = (string)($row['rfc'] ?? '');
+            $ente = (string)($row['ente'] ?? '');
+            if ($rfc === '' || $ente === '') {
+                continue;
+            }
+            $data[$rfc][$ente] = [
                 'estado' => (string)($row['estado'] ?? 'Sin valoración'),
                 'comentario' => (string)($row['comentario'] ?? ''),
                 'catalogo' => (string)($row['catalogo'] ?? ''),

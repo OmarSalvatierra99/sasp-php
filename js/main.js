@@ -217,12 +217,42 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
-    if (estadoEl) estadoEl.addEventListener("change", syncPreFormVisibility);
-    if (catalogoEl) catalogoEl.addEventListener("change", syncPreFormVisibility);
+    if (estadoEl) {
+      estadoEl.addEventListener("change", () => {
+        syncPreFormVisibility();
+        if (estadoEl.value === "Sin valoración") {
+          form.requestSubmit();
+        }
+      });
+    }
+    if (catalogoEl) {
+      catalogoEl.addEventListener("change", () => {
+        syncPreFormVisibility();
+        if (estadoEl && estadoEl.value === "Solventado" && catalogoEl.value && catalogoEl.value !== "Otro") {
+          form.requestSubmit();
+        }
+      });
+    }
+    if (otroEl) {
+      otroEl.addEventListener("blur", () => {
+        if (
+          estadoEl &&
+          catalogoEl &&
+          estadoEl.value === "Solventado" &&
+          catalogoEl.value === "Otro" &&
+          otroEl.value.trim()
+        ) {
+          form.requestSubmit();
+        }
+      });
+    }
     syncPreFormVisibility();
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (form.dataset.saving === "1") {
+        return;
+      }
 
       const rfc = form.dataset.rfc || "";
       const ente = form.dataset.ente || "";
@@ -245,6 +275,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
+      form.dataset.saving = "1";
       if (msg) msg.textContent = "Guardando...";
 
       try {
@@ -273,6 +304,8 @@ document.addEventListener("DOMContentLoaded", () => {
         if (msg) msg.textContent = "✓ Pre-validación guardada";
       } catch (error) {
         if (msg) msg.textContent = "✗ " + error.message;
+      } finally {
+        form.dataset.saving = "0";
       }
     });
   });

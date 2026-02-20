@@ -77,8 +77,8 @@ ob_start();
     <div class="export-bar" style="margin-bottom: 1rem;">
       <?php if (!empty($resultados_validados)): ?>
         <span class="badge badge-success">✓ Datos validados y visibles para todos</span>
-        <form method="post" action="/cancelar_validacion" class="form-inline" onsubmit="return confirm('¿Cancelar validación y regresar a borrador?');">
-          <button type="submit" class="btn btn-secondary">Cancelar validación</button>
+        <form method="post" action="/cancelar_validacion" class="form-inline" onsubmit="return confirm('¿Volver resultados a borrador? Esto no borra solventaciones guardadas.');">
+          <button type="submit" class="btn btn-secondary">Volver resultados a borrador</button>
         </form>
       <?php else: ?>
         <form method="post" action="/validar_datos" class="form-inline">
@@ -89,6 +89,42 @@ ob_start();
       <span class="badge badge-info">RFC solventados: <?php echo (int)(($resumen_prevalidacion['rfc_solventados'] ?? 0)); ?></span>
       <span class="badge badge-info">Registros solventados: <?php echo (int)(($resumen_prevalidacion['registros_solventados'] ?? 0)); ?></span>
     </div>
+
+    <section style="margin-bottom:var(--space-6);">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:var(--space-4); flex-wrap:wrap; margin-bottom:var(--space-3);">
+        <h3 style="margin:0;">Detalle de RFC solventados</h3>
+        <a class="btn btn-secondary" href="/exportar_solventados?ambito=<?php echo urlencode((string)($ambito_sel ?? 'estatales')); ?>&ente=<?php echo urlencode((string)($filtro_ente ?? '')); ?>">
+          Exportar lista de solventados
+        </a>
+      </div>
+
+      <?php if (!empty($detalle_solventados)): ?>
+        <table class="tabla-resultados">
+          <thead>
+            <tr>
+              <th>RFC</th>
+              <th>Nombre</th>
+              <th>Ente</th>
+              <th>Opción de solventación</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach ($detalle_solventados as $item): ?>
+              <tr>
+                <td><?php echo htmlspecialchars((string)($item['rfc'] ?? '')); ?></td>
+                <td><?php echo htmlspecialchars((string)($item['nombre'] ?? '')); ?></td>
+                <td><?php echo htmlspecialchars((string)($item['ente'] ?? '')); ?></td>
+                <td><?php echo htmlspecialchars((string)($item['motivo'] ?? '')); ?></td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php else: ?>
+        <div class="badge badge-neutral" style="display:block; padding:var(--space-6);">
+          No hay RFC solventados para los filtros actuales.
+        </div>
+      <?php endif; ?>
+    </section>
   <?php endif; ?>
 
   <div class="doble-tab-bar" style="margin-bottom: var(--space-6);">

@@ -148,6 +148,11 @@ class Application
             return;
         }
 
+        if ($path === '/exportar_solventados') {
+            $this->exportarSolventados($request);
+            return;
+        }
+
         if ($path === '/catalogos') {
             $this->catalogosHome();
             return;
@@ -266,6 +271,7 @@ class Application
             'rfc_solventados' => 0,
             'registros_solventados' => 0
         ];
+        $detalleSolventados = [];
 
         $resultadosBase = $this->dbManager->obtenerCrucesReales();
         $resultados = $esLuis
@@ -303,13 +309,28 @@ class Application
         }
 
         if ($mostrarDuplicados) {
-            $rfcSolventados = [];
-            $registrosSolventados = [];
+            $solventadosData = $this->construirDetalleSolventados(
+                $resultados,
+                $filtroEnte,
+                $ambitoSel,
+                $entesUsuario,
+                $modoPermiso
+            );
+            $resumenPrevalidacion = $solventadosData['resumen'];
+            $detalleSolventados = $solventadosData['detalle'];
+
+            $rfcsResultados = array_values(array_unique(array_map(
+                static fn(array $row): string => strtoupper(trim((string)($row['rfc'] ?? ''))),
+                $resultados
+            )));
+            $solventacionesPorRfc = $this->dbManager->getSolventacionesPorRfcs($rfcsResultados);
+            $prevalidacionesPorRfc = $this->dbManager->getPrevalidacionesPorRfcs($rfcsResultados);
 
             // Agrupar duplicados por ente
             foreach ($resultados as $r) {
-                $mapaSolvs = $this->dbManager->getSolventacionesPorRfc($r['rfc']);
-                $mapaPre = $this->dbManager->getPrevalidacionesPorRfc($r['rfc']);
+                $rfcActual = strtoupper(trim((string)($r['rfc'] ?? '')));
+                $mapaSolvs = $solventacionesPorRfc[$rfcActual] ?? [];
+                $mapaPre = $prevalidacionesPorRfc[$rfcActual] ?? [];
 
                 foreach ($r['entes'] as $enteClave) {
                     if (!$esLuis && $this->esPrevalidadoOculto($mapaPre, $enteClave)) {
@@ -344,11 +365,6 @@ class Application
                     $pre = $mapaPre[$claveEnteActual] ?? [];
                     $preEstado = (string)($pre['estado'] ?? 'Sin valoración');
 
-                    if (strtoupper(trim($preEstado)) === 'SOLVENTADO') {
-                        $rfcSolventados[(string)$r['rfc']] = true;
-                        $registrosSolventados[(string)$r['rfc'] . '|' . (string)$claveEnteActual] = true;
-                    }
-
                     $agrupado[$display][] = [
                         'rfc' => $r['rfc'],
                         'nombre' => $r['nombre'],
@@ -364,11 +380,6 @@ class Application
                     ];
                 }
             }
-
-            $resumenPrevalidacion = [
-                'rfc_solventados' => count($rfcSolventados),
-                'registros_solventados' => count($registrosSolventados)
-            ];
         }
 
         // Calcular duplicados por ente y ordenar
@@ -481,7 +492,7 @@ class Application
             ['m' => 'Trabajadores analizados (RFC únicos)', 'v' => number_format($trabajadoresProcesados, 0, '.', ',')],
             ['m' => 'Casos de duplicidad (RFC únicos)', 'v' => (string)$duplicadosDetectados],
             ['m' => 'Entes con duplicidad', 'v' => (string)$entesConDuplicidad],
-            ['m' => 'Índice de duplicidad', 'v' => number_format($indiceDuplicidad, 2) . '%']
+            ['m' => 'Índice de trabajadores duplicados', 'v' => number_format($indiceDuplicidad, 2) . '%']
         ];
 
         $this->render('resultados.php', [
@@ -497,6 +508,7 @@ class Application
             'validacion_error_msg' => $validacionErrorMsg,
             'resumen_auditoria' => $resumenAuditoria,
             'resumen_prevalidacion' => $resumenPrevalidacion,
+            'detalle_solventados' => $detalleSolventados,
             'resumen' => [
                 'entes_visibles' => $entesVisibles,
                 'registros_cargados' => $registrosCargados,
@@ -699,19 +711,40 @@ class Application
             return;
         }
 
+        if ($estado === 'Sin valoración') {
+            $comentario = '';
+            $catalogo = '';
+            $otroTexto = '';
+        }
+
         try {
-            $filas = $this->dbManager->guardarPrevalidacionDuplicado(
-                $rfc,
-                $ente,
-                $estado,
-                $comentario,
-                $catalogo,
-                $otroTexto,
-                (string)($_SESSION['usuario'] ?? 'luis')
-            );
+            $usuario = (string)($_SESSION['usuario'] ?? 'luis');
+            $entesCruce = $this->dbManager->obtenerEntesConCrucePorRfc($rfc);
+            if (empty($entesCruce)) {
+                $entesCruce = [$ente];
+            }
+            $entesCruce = array_values(array_unique(array_filter(array_map(
+                fn(string $enteClave): string => $this->dbManager->normalizarEnteClave($enteClave) ?? $enteClave,
+                $entesCruce
+            ))));
+
+            $filas = 0;
+            foreach ($entesCruce as $enteObjetivo) {
+                $filas += $this->dbManager->guardarPrevalidacionDuplicado(
+                    $rfc,
+                    $enteObjetivo,
+                    $estado,
+                    $comentario,
+                    $catalogo,
+                    $otroTexto,
+                    $usuario
+                );
+            }
 
             $this->jsonResponse([
-                'mensaje' => "Pre-validación guardada ({$filas} filas)"
+                'mensaje' => "Pre-validación aplicada en " . count($entesCruce) . " ente(s)",
+                'filas' => $filas,
+                'entes_afectados' => $entesCruce
             ]);
         } catch (\Throwable $e) {
             $this->jsonResponse(['error' => $e->getMessage()], 500);
@@ -829,6 +862,49 @@ class Application
             : $this->filtrarDuplicadosConVisibilidad($resultadosBase);
         $rows = $this->construirFilasExport($resultados);
         $this->exportarSpreadsheet($rows, 'SASP_Resultados_Generales');
+    }
+
+    private function exportarSolventados(Request $request): void
+    {
+        if (!$this->esUsuarioLuis()) {
+            http_response_code(403);
+            echo 'No autorizado';
+            return;
+        }
+
+        $filtroEnte = trim((string)$request->query('ente', ''));
+        $ambitoSel = strtolower(trim((string)$request->query('ambito', 'estatales')));
+        if (!in_array($ambitoSel, ['estatales', 'municipios'], true)) {
+            $ambitoSel = 'estatales';
+        }
+
+        $resultadosBase = $this->dbManager->obtenerCrucesReales();
+        $resultados = $this->filtrarDuplicadosReales($resultadosBase);
+        $detalle = $this->construirDetalleSolventados(
+            $resultados,
+            $filtroEnte,
+            $ambitoSel,
+            $_SESSION['entes'] ?? [],
+            'ALL'
+        )['detalle'];
+
+        $rows = [];
+        foreach ($detalle as $item) {
+            $rows[] = [
+                'RFC' => $item['rfc'],
+                'Nombre' => $item['nombre'],
+                'Ente Origen' => $item['ente'],
+                'Estatus' => 'Solventado',
+                'Motivo de Solventación' => $item['motivo'],
+                'Observación' => $item['observacion']
+            ];
+        }
+
+        $this->exportarSpreadsheet(
+            $rows,
+            'SASP_Solventados',
+            ['RFC', 'Nombre', 'Ente Origen', 'Estatus', 'Motivo de Solventación']
+        );
     }
 
     /**
@@ -1262,22 +1338,24 @@ class Application
         return $filas;
     }
 
-    private function exportarSpreadsheet(array $rows, string $filenameBase): void
+    private function exportarSpreadsheet(array $rows, string $filenameBase, ?array $headers = null): void
     {
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
-        $headers = [
-            'RFC',
-            'Nombre',
-            'Puesto',
-            'Ente Origen',
-            'Fecha Alta',
-            'Fecha Baja',
-            'Total Percepciones',
-            'Entes Incompatibilidad',
-            'Quincenas Cruce',
-            'Estatus'
-        ];
+        if ($headers === null) {
+            $headers = [
+                'RFC',
+                'Nombre',
+                'Puesto',
+                'Ente Origen',
+                'Fecha Alta',
+                'Fecha Baja',
+                'Total Percepciones',
+                'Entes Incompatibilidad',
+                'Quincenas Cruce',
+                'Estatus'
+            ];
+        }
 
         $col = 1;
         foreach ($headers as $header) {
@@ -1287,20 +1365,16 @@ class Application
 
         $rowNum = 2;
         foreach ($rows as $row) {
-            $sheet->setCellValueByColumnAndRow(1, $rowNum, $row['RFC']);
-            $sheet->setCellValueByColumnAndRow(2, $rowNum, $row['Nombre']);
-            $sheet->setCellValueByColumnAndRow(3, $rowNum, $row['Puesto']);
-            $sheet->setCellValueByColumnAndRow(4, $rowNum, $row['Ente Origen']);
-            $sheet->setCellValueByColumnAndRow(5, $rowNum, $row['Fecha Alta']);
-            $sheet->setCellValueByColumnAndRow(6, $rowNum, $row['Fecha Baja']);
-            $sheet->setCellValueByColumnAndRow(7, $rowNum, $row['Total Percepciones']);
-            $sheet->setCellValueByColumnAndRow(8, $rowNum, $row['Entes Incompatibilidad']);
-            $sheet->setCellValueByColumnAndRow(9, $rowNum, $row['Quincenas']);
-            $sheet->setCellValueByColumnAndRow(10, $rowNum, $row['Estatus']);
+            $col = 1;
+            foreach ($headers as $header) {
+                $key = $header === 'Quincenas Cruce' ? 'Quincenas' : $header;
+                $sheet->setCellValueByColumnAndRow($col, $rowNum, (string)($row[$key] ?? ''));
+                $col++;
+            }
             $rowNum++;
         }
 
-        foreach (range(1, 10) as $colIndex) {
+        foreach (range(1, count($headers)) as $colIndex) {
             $sheet->getColumnDimensionByColumn($colIndex)->setAutoSize(true);
         }
 
@@ -1312,6 +1386,103 @@ class Application
         $writer = new Xlsx($spreadsheet);
         $writer->save('php://output');
         exit;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $resultados
+     * @param array<int, string> $entesUsuario
+     * @return array{resumen: array{rfc_solventados:int, registros_solventados:int}, detalle: array<int, array{rfc:string, nombre:string, ente:string, motivo:string, observacion:string}>}
+     */
+    private function construirDetalleSolventados(
+        array $resultados,
+        string $filtroEnte,
+        string $ambitoSel,
+        array $entesUsuario,
+        string $modoPermiso
+    ): array {
+        $rfcSolventados = [];
+        $registrosSolventados = [];
+        $detalleAgrupado = [];
+
+        $rfcsResultados = array_values(array_unique(array_map(
+            static fn(array $row): string => strtoupper(trim((string)($row['rfc'] ?? ''))),
+            $resultados
+        )));
+        $prevalidacionesPorRfc = $this->dbManager->getPrevalidacionesPorRfcs($rfcsResultados);
+
+        foreach ($resultados as $r) {
+            $rfcActual = strtoupper(trim((string)($r['rfc'] ?? '')));
+            $mapaPre = $prevalidacionesPorRfc[$rfcActual] ?? [];
+            foreach (($r['entes'] ?? []) as $enteClave) {
+                if (!$this->puedeVerEnte((string)$enteClave, $entesUsuario, $modoPermiso)) {
+                    continue;
+                }
+                if (!$this->coincideAmbitoSeleccionado($ambitoSel, $this->tipoEnte((string)$enteClave))) {
+                    continue;
+                }
+
+                $display = $this->enteDisplay((string)$enteClave);
+                if ($filtroEnte !== '' && $display !== $filtroEnte) {
+                    continue;
+                }
+
+                $claveEnteActual = $this->dbManager->normalizarEnteClave((string)$enteClave) ?? (string)$enteClave;
+                $pre = $mapaPre[$claveEnteActual] ?? [];
+                $preEstado = strtoupper(trim((string)($pre['estado'] ?? 'Sin valoración')));
+                if ($preEstado !== 'SOLVENTADO') {
+                    continue;
+                }
+
+                $rfc = (string)($r['rfc'] ?? '');
+                $rfcSolventados[$rfc] = true;
+                $registrosSolventados[$rfc . '|' . $claveEnteActual] = true;
+
+                $catalogo = trim((string)($pre['catalogo'] ?? ''));
+                $otro = trim((string)($pre['otro_texto'] ?? ''));
+                $comentario = trim((string)($pre['comentario'] ?? ''));
+                $motivo = $catalogo === 'Otro' ? ($otro !== '' ? $otro : 'Otro') : ($catalogo !== '' ? $catalogo : 'Sin motivo');
+                $detalleKey = $rfc . '|' . $motivo;
+                if (!isset($detalleAgrupado[$detalleKey])) {
+                    $detalleAgrupado[$detalleKey] = [
+                        'rfc' => $rfc,
+                        'nombre' => (string)($r['nombre'] ?? ''),
+                        'motivo' => $motivo,
+                        'observacion' => $comentario,
+                        'entes' => []
+                    ];
+                }
+                if ($detalleAgrupado[$detalleKey]['observacion'] === '' && $comentario !== '') {
+                    $detalleAgrupado[$detalleKey]['observacion'] = $comentario;
+                }
+                $detalleAgrupado[$detalleKey]['entes'][$display] = true;
+            }
+        }
+
+        $detalle = [];
+        foreach ($detalleAgrupado as $item) {
+            $entes = array_keys($item['entes']);
+            sort($entes);
+            $detalle[] = [
+                'rfc' => $item['rfc'],
+                'nombre' => $item['nombre'],
+                'ente' => implode(', ', $entes),
+                'motivo' => $item['motivo'],
+                'observacion' => $item['observacion']
+            ];
+        }
+
+        usort($detalle, function (array $a, array $b): int {
+            $cmp = strcmp((string)$a['rfc'], (string)$b['rfc']);
+            return $cmp !== 0 ? $cmp : strcmp((string)$a['motivo'], (string)$b['motivo']);
+        });
+
+        return [
+            'resumen' => [
+                'rfc_solventados' => count($rfcSolventados),
+                'registros_solventados' => count($registrosSolventados)
+            ],
+            'detalle' => $detalle
+        ];
     }
 
     private function render(string $template, array $data = []): void
