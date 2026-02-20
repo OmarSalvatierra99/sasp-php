@@ -455,22 +455,12 @@ class Application
             }
         }
 
-        $entesSinDuplicidad = max(0, $entesVisibles - $entesConDuplicidad);
-        $coberturaEntes = $entesVisibles > 0
-            ? round(($entesConDuplicidad / $entesVisibles) * 100, 2)
-            : 0.0;
-
         $resumenAuditoria = [
-            ['m' => 'Fecha de corte', 'v' => date('Y-m-d H:i:s')],
-            ['m' => 'Estado de validación', 'v' => $resultadosValidados ? 'Validados' : 'Borrador'],
             ['m' => 'Entes analizados', 'v' => (string)$entesVisibles],
-            ['m' => 'Entes con duplicidad', 'v' => (string)$entesConDuplicidad],
-            ['m' => 'Entes sin duplicidad', 'v' => (string)$entesSinDuplicidad],
             ['m' => 'Trabajadores analizados (RFC únicos)', 'v' => (string)$trabajadoresProcesados],
             ['m' => 'Casos de duplicidad (RFC únicos)', 'v' => (string)$duplicadosDetectados],
-            ['m' => 'Índice de duplicidad', 'v' => number_format($indiceDuplicidad, 2) . '%'],
-            ['m' => 'Cobertura de riesgo por ente', 'v' => number_format($coberturaEntes, 2) . '%'],
-            ['m' => 'Promedio de registros por ente', 'v' => number_format($promedioRegistrosPorEnte, 2)]
+            ['m' => 'Entes con duplicidad', 'v' => (string)$entesConDuplicidad],
+            ['m' => 'Índice de duplicidad', 'v' => number_format($indiceDuplicidad, 2) . '%']
         ];
 
         $this->render('resultados.php', [

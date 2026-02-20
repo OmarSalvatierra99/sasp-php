@@ -1,5 +1,15 @@
 <?php
 $title = 'SASP - Detalle del RFC';
+$formatearMonto = static function ($monto): string {
+  if ($monto === null || $monto === '') {
+    return '-';
+  }
+  $valorLimpio = preg_replace('/[^0-9.\-]/', '', (string)$monto);
+  if ($valorLimpio === '' || !is_numeric($valorLimpio)) {
+    return '-';
+  }
+  return number_format((float)$valorLimpio, 0, '.', ',') . ' MXN';
+};
 ob_start();
 ?>
 
@@ -34,9 +44,7 @@ ob_start();
             <td><?php echo htmlspecialchars($ente_display($reg['ente'] ?? '')); ?></td>
             <td><?php echo htmlspecialchars((string)($reg['puesto'] ?? 'Sin puesto')); ?></td>
             <td>
-              <?php if (!empty($reg['monto'])): ?>
-                MXN <?php echo number_format((float)$reg['monto'], 2); ?>
-              <?php else: ?>-<?php endif; ?>
+              <?php echo htmlspecialchars($formatearMonto($reg['monto'] ?? null)); ?>
             </td>
             <td><?php echo htmlspecialchars($qnasLabel); ?></td>
             <td><?php echo htmlspecialchars((string)($reg['fecha_ingreso'] ?? '-')); ?></td>
