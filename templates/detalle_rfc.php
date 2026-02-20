@@ -43,9 +43,13 @@ ob_start();
             <td><?php echo htmlspecialchars((string)($reg['fecha_egreso'] ?? '-')); ?></td>
             <td><?php echo htmlspecialchars((string)$estadoEnte); ?></td>
             <td class="accion">
-              <a class="btn btn-primary" href="/solventacion/<?php echo urlencode((string)$rfc); ?>?ente=<?php echo urlencode((string)($reg['ente'] ?? '')); ?>">
-                Editar
-              </a>
+              <?php if (!empty($es_luis)): ?>
+                <a class="btn btn-primary" href="/solventacion/<?php echo urlencode((string)$rfc); ?>?ente=<?php echo urlencode((string)($reg['ente'] ?? '')); ?>">
+                  Editar
+                </a>
+              <?php else: ?>
+                <span class="badge badge-neutral">Solo lectura</span>
+              <?php endif; ?>
             </td>
           </tr>
         <?php endforeach; ?>

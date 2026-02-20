@@ -108,6 +108,16 @@ class Application
             return;
         }
 
+        if ($path === '/prevalidar_duplicado' && $method === 'POST') {
+            $this->prevalidarDuplicado($request);
+            return;
+        }
+
+        if ($path === '/validar_datos' && $method === 'POST') {
+            $this->validarDatos($request);
+            return;
+        }
+
         if (preg_match('#^/resultados/([A-Z0-9]+)$#', $path, $matches)) {
             $this->resultadosPorRfc($matches[1]);
             return;
@@ -233,9 +243,12 @@ class Application
     {
         $filtroEnte = trim((string)$request->query('ente', ''));
         $entesUsuario = $_SESSION['entes'] ?? [];
-        $modoPermiso = $this->allowedAll($entesUsuario);
+        $esLuis = $this->esUsuarioLuis();
+        $resultadosValidados = $this->dbManager->resultadosValidados();
+        $mostrarDuplicados = $esLuis || $resultadosValidados;
+        $modoPermiso = $esLuis ? "ALL" : $this->allowedAll($entesUsuario);
 
-        $resultados = $this->filtrarDuplicadosReales($this->dbManager->obtenerCrucesReales());
+        $resultados = $this->filtrarDuplicadosConVisibilidad($this->dbManager->obtenerCrucesReales());
         $trabajadoresPorEnte = $this->dbManager->contarTrabajadoresPorEnte();
         $catalogo = array_merge($this->dbManager->listarEntes(), $this->dbManager->listarMunicipios());
 
@@ -263,40 +276,55 @@ class Application
             ];
         }
 
-        // Agrupar duplicados por ente
-        foreach ($resultados as $r) {
-            $mapaSolvs = $this->dbManager->getSolventacionesPorRfc($r['rfc']);
+        if ($mostrarDuplicados) {
+            // Agrupar duplicados por ente
+            foreach ($resultados as $r) {
+                $mapaSolvs = $this->dbManager->getSolventacionesPorRfc($r['rfc']);
+                $mapaPre = $this->dbManager->getPrevalidacionesPorRfc($r['rfc']);
 
-            foreach ($r['entes'] as $enteClave) {
-                if (!$this->puedeVerEnte($enteClave, $entesUsuario, $modoPermiso)) {
-                    continue;
+                foreach ($r['entes'] as $enteClave) {
+                    if ($this->esPrevalidadoOculto($mapaPre, $enteClave)) {
+                        continue;
+                    }
+
+                    if (!$this->puedeVerEnte($enteClave, $entesUsuario, $modoPermiso)) {
+                        continue;
+                    }
+
+                    $display = $this->enteDisplay($enteClave);
+                    if ($filtroEnte && $display !== $filtroEnte) {
+                        continue;
+                    }
+
+                    $otrosEntes = array_filter(
+                        array_map(fn($e) => $this->enteSigla($e), $r['entes']),
+                        fn($e) => $this->sanitizeText($e) !== $this->sanitizeText($enteClave)
+                    );
+
+                    $estadoDefault = $r['estado'] ?? 'Sin valoración';
+                    $estadoEntes = [];
+                    foreach ($r['entes'] as $en) {
+                        $claveNorm = $this->dbManager->normalizarEnteClave($en);
+                        $estadoEntes[$this->enteSigla($en)] = $mapaSolvs[$claveNorm]['estado'] ?? $estadoDefault;
+                    }
+
+                    $claveEnteActual = $this->dbManager->normalizarEnteClave($enteClave) ?? $enteClave;
+                    $pre = $mapaPre[$claveEnteActual] ?? [];
+
+                    $agrupado[$display][] = [
+                        'rfc' => $r['rfc'],
+                        'nombre' => $r['nombre'],
+                        'puesto' => $this->primerPuesto($r['registros'] ?? []),
+                        'entes' => array_values(array_unique($otrosEntes)),
+                        'estado' => $estadoDefault,
+                        'estado_entes' => $estadoEntes,
+                        'ente_origen' => $enteClave,
+                        'pre_estado' => $pre['estado'] ?? 'Sin valoración',
+                        'pre_valoracion' => $pre['comentario'] ?? '',
+                        'pre_catalogo' => $pre['catalogo'] ?? '',
+                        'pre_otro_texto' => $pre['otro_texto'] ?? ''
+                    ];
                 }
-
-                $display = $this->enteDisplay($enteClave);
-                if ($filtroEnte && $display !== $filtroEnte) {
-                    continue;
-                }
-
-                $otrosEntes = array_filter(
-                    array_map(fn($e) => $this->enteSigla($e), $r['entes']),
-                    fn($e) => $this->sanitizeText($e) !== $this->sanitizeText($enteClave)
-                );
-
-                $estadoDefault = $r['estado'] ?? 'Sin valoración';
-                $estadoEntes = [];
-                foreach ($r['entes'] as $en) {
-                    $claveNorm = $this->dbManager->normalizarEnteClave($en);
-                    $estadoEntes[$this->enteSigla($en)] = $mapaSolvs[$claveNorm]['estado'] ?? $estadoDefault;
-                }
-
-                $agrupado[$display][] = [
-                    'rfc' => $r['rfc'],
-                    'nombre' => $r['nombre'],
-                    'puesto' => $this->primerPuesto($r['registros'] ?? []),
-                    'entes' => array_values(array_unique($otrosEntes)),
-                    'estado' => $estadoDefault,
-                    'estado_entes' => $estadoEntes
-                ];
             }
         }
 
@@ -320,12 +348,20 @@ class Application
         $this->render('resultados.php', [
             'resultados' => $agrupadoFinal,
             'entes_info' => $entesInfo,
-            'filtro_ente' => $filtroEnte
+            'filtro_ente' => $filtroEnte,
+            'es_luis' => $esLuis,
+            'resultados_validados' => $resultadosValidados,
+            'mostrar_duplicados' => $mostrarDuplicados
         ]);
     }
 
     private function resultadosPorRfc(string $rfc): void
     {
+        if (!$this->esUsuarioLuis() && !$this->dbManager->resultadosValidados()) {
+            $this->redirect('/resultados');
+            return;
+        }
+
         $info = $this->dbManager->obtenerResultadosPorRfc($rfc);
 
         if (!$info) {
@@ -345,11 +381,20 @@ class Application
             unset($reg);
         }
 
-        $this->render('detalle_rfc.php', ['rfc' => $rfc, 'info' => $info]);
+        $this->render('detalle_rfc.php', [
+            'rfc' => $rfc,
+            'info' => $info,
+            'es_luis' => $this->esUsuarioLuis()
+        ]);
     }
 
     private function solventacionDetalle(Request $request, string $rfc): void
     {
+        if (!$this->esUsuarioLuis()) {
+            $this->redirect('/resultados');
+            return;
+        }
+
         $enteSel = (string)$request->query('ente', '');
 
         if ($request->method() === 'POST') {
@@ -400,6 +445,11 @@ class Application
 
     private function actualizarEstado(Request $request): void
     {
+        if (!$this->esUsuarioLuis()) {
+            $this->jsonResponse(['error' => 'No autorizado'], 403);
+            return;
+        }
+
         $data = $request->jsonBody();
         $rfc = (string)($data['rfc'] ?? '');
         $estado = (string)($data['estado'] ?? '');
@@ -432,18 +482,83 @@ class Application
         }
     }
 
+    private function prevalidarDuplicado(Request $request): void
+    {
+        if (!$this->esUsuarioLuis()) {
+            $this->jsonResponse(['error' => 'No autorizado'], 403);
+            return;
+        }
+
+        $data = $request->jsonBody();
+        $rfc = trim((string)($data['rfc'] ?? ''));
+        $ente = trim((string)($data['ente'] ?? ''));
+        $estado = trim((string)($data['estado'] ?? 'Sin valoración'));
+        $comentario = trim((string)($data['valoracion'] ?? ''));
+        $catalogo = trim((string)($data['catalogo'] ?? ''));
+        $otroTexto = trim((string)($data['otro_texto'] ?? ''));
+
+        if ($rfc === '' || $ente === '') {
+            $this->jsonResponse(['error' => 'Faltan RFC o ente'], 400);
+            return;
+        }
+
+        if (in_array($estado, ['Solventado', 'No Solventado'], true) && $catalogo === '') {
+            $this->jsonResponse(['error' => 'Selecciona una opción de catálogo'], 400);
+            return;
+        }
+
+        if ($catalogo === 'Otro' && $otroTexto === '') {
+            $this->jsonResponse(['error' => 'Debes especificar texto para opción Otro'], 400);
+            return;
+        }
+
+        try {
+            $filas = $this->dbManager->guardarPrevalidacionDuplicado(
+                $rfc,
+                $ente,
+                $estado,
+                $comentario,
+                $catalogo,
+                $otroTexto,
+                (string)($_SESSION['usuario'] ?? 'luis')
+            );
+
+            $this->jsonResponse([
+                'mensaje' => "Pre-validación guardada ({$filas} filas)"
+            ]);
+        } catch (\Throwable $e) {
+            $this->jsonResponse(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    private function validarDatos(Request $request): void
+    {
+        if (!$this->esUsuarioLuis()) {
+            $this->jsonResponse(['error' => 'No autorizado'], 403);
+            return;
+        }
+
+        $this->dbManager->marcarResultadosValidados((string)($_SESSION['usuario'] ?? 'luis'));
+        $this->redirect('/resultados');
+    }
+
     private function exportarPorEnte(Request $request): void
     {
         $enteFiltro = trim((string)$request->query('ente', ''));
         $entesUsuario = $_SESSION['entes'] ?? [];
-        $modoPermiso = $this->allowedAll($entesUsuario);
+        $modoPermiso = $this->esUsuarioLuis() ? "ALL" : $this->allowedAll($entesUsuario);
+
+        if (!$this->esUsuarioLuis() && !$this->dbManager->resultadosValidados()) {
+            $this->redirect('/resultados');
+            return;
+        }
 
         if ($enteFiltro === '') {
             $this->redirect('/resultados');
             return;
         }
 
-        $resultados = $this->filtrarDuplicadosReales($this->dbManager->obtenerCrucesReales());
+        $resultados = $this->filtrarDuplicadosConVisibilidad($this->dbManager->obtenerCrucesReales());
         $permitidos = array_filter($resultados, function ($r) use ($enteFiltro, $entesUsuario, $modoPermiso) {
             foreach ($r['entes'] as $ente) {
                 if ($this->enteDisplay($ente) === $enteFiltro &&
@@ -461,9 +576,56 @@ class Application
 
     private function exportarExcelGeneral(): void
     {
-        $resultados = $this->filtrarDuplicadosReales($this->dbManager->obtenerCrucesReales());
+        if (!$this->esUsuarioLuis() && !$this->dbManager->resultadosValidados()) {
+            $this->redirect('/resultados');
+            return;
+        }
+
+        $resultados = $this->filtrarDuplicadosConVisibilidad($this->dbManager->obtenerCrucesReales());
         $rows = $this->construirFilasExport($resultados);
         $this->exportarSpreadsheet($rows, 'SASP_Resultados_Generales');
+    }
+
+    /**
+     * Excluye duplicados que ya fueron pre-validados por Luis.
+     *
+     * @param array<int, array<string, mixed>> $resultados
+     * @return array<int, array<string, mixed>>
+     */
+    private function filtrarDuplicadosConVisibilidad(array $resultados): array
+    {
+        $filtrados = $this->filtrarDuplicadosReales($resultados);
+        $out = [];
+
+        foreach ($filtrados as $r) {
+            $mapaPre = $this->dbManager->getPrevalidacionesPorRfc((string)$r['rfc']);
+            $entesVisibles = [];
+            foreach (($r['entes'] ?? []) as $ente) {
+                if (!$this->esPrevalidadoOculto($mapaPre, (string)$ente)) {
+                    $entesVisibles[] = $ente;
+                }
+            }
+
+            $entesVisibles = array_values(array_unique($entesVisibles));
+            if (count($entesVisibles) < 2) {
+                continue;
+            }
+
+            $r['entes'] = $entesVisibles;
+            $out[] = $r;
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param array<string, array{estado:string, comentario:string, catalogo:string, otro_texto:string}> $mapaPre
+     */
+    private function esPrevalidadoOculto(array $mapaPre, string $enteClave): bool
+    {
+        $clave = $this->dbManager->normalizarEnteClave($enteClave) ?? $enteClave;
+        $estado = strtoupper(trim((string)($mapaPre[$clave]['estado'] ?? 'Sin valoración')));
+        return $estado === 'SOLVENTADO' || $estado === 'NO SOLVENTADO';
     }
 
     private function catalogosHome(): void
@@ -555,6 +717,10 @@ class Application
 
     private function allowedAll(array $entesUsuario): ?string
     {
+        if ($this->esUsuarioLuis()) {
+            return "ALL";
+        }
+
         $tieneTodos = false;
         $tieneEntes = false;
         $tieneMunis = false;
@@ -937,6 +1103,11 @@ class Application
         http_response_code($status);
         header('Content-Type: application/json');
         echo json_encode($data, JSON_UNESCAPED_UNICODE);
+    }
+
+    private function esUsuarioLuis(): bool
+    {
+        return strtolower(trim((string)($_SESSION['usuario'] ?? ''))) === 'luis';
     }
 
     private function redirect(string $path): void

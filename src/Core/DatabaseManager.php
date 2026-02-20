@@ -100,80 +100,131 @@ class DatabaseManager
     {
         $conn = $this->connect();
 
-        $conn->exec("
-            CREATE TABLE IF NOT EXISTS laboral (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                tipo_analisis TEXT NOT NULL,
-                rfc TEXT NOT NULL,
-                datos TEXT NOT NULL,
-                hash_firma TEXT UNIQUE,
-                fecha_analisis TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
+        try {
+            $conn->exec("
+                CREATE TABLE IF NOT EXISTS laboral (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tipo_analisis TEXT NOT NULL,
+                    rfc TEXT NOT NULL,
+                    datos TEXT NOT NULL,
+                    hash_firma TEXT UNIQUE,
+                    fecha_analisis TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
 
-            CREATE TABLE IF NOT EXISTS registros_laborales (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                rfc TEXT NOT NULL,
-                ente TEXT NOT NULL,
-                nombre TEXT NOT NULL,
-                puesto TEXT,
-                fecha_ingreso TEXT,
-                fecha_egreso TEXT,
-                monto REAL,
-                qnas TEXT NOT NULL,
-                fecha_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(rfc, ente)
-            );
+                CREATE TABLE IF NOT EXISTS registros_laborales (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rfc TEXT NOT NULL,
+                    ente TEXT NOT NULL,
+                    nombre TEXT NOT NULL,
+                    puesto TEXT,
+                    fecha_ingreso TEXT,
+                    fecha_egreso TEXT,
+                    monto REAL,
+                    qnas TEXT NOT NULL,
+                    fecha_carga TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(rfc, ente)
+                );
 
-            CREATE TABLE IF NOT EXISTS solventaciones (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                rfc TEXT NOT NULL,
-                ente TEXT NOT NULL,
-                estado TEXT NOT NULL,
-                comentario TEXT,
-                catalogo TEXT,
-                otro_texto TEXT,
-                actualizado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(rfc, ente)
-            );
+                CREATE TABLE IF NOT EXISTS solventaciones (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rfc TEXT NOT NULL,
+                    ente TEXT NOT NULL,
+                    estado TEXT NOT NULL,
+                    comentario TEXT,
+                    catalogo TEXT,
+                    otro_texto TEXT,
+                    actualizado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(rfc, ente)
+                );
 
-            CREATE TABLE IF NOT EXISTS usuarios (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nombre TEXT NOT NULL,
-                usuario TEXT UNIQUE NOT NULL,
-                clave TEXT NOT NULL,
-                entes TEXT NOT NULL
-            );
+                CREATE TABLE IF NOT EXISTS usuarios (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nombre TEXT NOT NULL,
+                    usuario TEXT UNIQUE NOT NULL,
+                    clave TEXT NOT NULL,
+                    entes TEXT NOT NULL
+                );
 
-            CREATE TABLE IF NOT EXISTS entes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                num TEXT NOT NULL,
-                clave TEXT UNIQUE NOT NULL,
-                nombre TEXT NOT NULL,
-                siglas TEXT,
-                clasificacion TEXT,
-                ambito TEXT,
-                activo INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
+                CREATE TABLE IF NOT EXISTS workflow_estado (
+                    clave TEXT PRIMARY KEY,
+                    valor TEXT NOT NULL,
+                    actualizado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    actualizado_por TEXT
+                );
 
-            CREATE TABLE IF NOT EXISTS municipios (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                num TEXT NOT NULL,
-                clave TEXT UNIQUE NOT NULL,
-                nombre TEXT NOT NULL,
-                siglas TEXT,
-                clasificacion TEXT,
-                ambito TEXT DEFAULT 'MUNICIPAL',
-                activo INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        ");
+                CREATE TABLE IF NOT EXISTS prevalidaciones (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rfc TEXT NOT NULL,
+                    ente TEXT NOT NULL,
+                    estado TEXT NOT NULL DEFAULT 'Sin valoración',
+                    comentario TEXT,
+                    catalogo TEXT,
+                    otro_texto TEXT,
+                    actualizado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    usuario TEXT,
+                    UNIQUE(rfc, ente)
+                );
+
+                CREATE TABLE IF NOT EXISTS entes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    num TEXT NOT NULL,
+                    clave TEXT UNIQUE NOT NULL,
+                    nombre TEXT NOT NULL,
+                    siglas TEXT,
+                    clasificacion TEXT,
+                    ambito TEXT,
+                    activo INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS municipios (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    num TEXT NOT NULL,
+                    clave TEXT UNIQUE NOT NULL,
+                    nombre TEXT NOT NULL,
+                    siglas TEXT,
+                    clasificacion TEXT,
+                    ambito TEXT DEFAULT 'MUNICIPAL',
+                    activo INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            ");
+        } catch (PDOException $e) {
+            if ($this->isReadOnlySqliteError($e)) {
+                $this->log("⚠️  Base SQLite en modo solo lectura; se omiten migraciones de inicio.");
+                return;
+            }
+            throw $e;
+        }
 
         // Migrar columnas nuevas en solventaciones si no existen
-        $this->migrateSolventacionesColumns();
+        try {
+            $this->migrateSolventacionesColumns();
+            $this->migrateWorkflowDefaults();
+            $this->migrateLegacyPrevalidaciones();
+        } catch (PDOException $e) {
+            if ($this->isReadOnlySqliteError($e)) {
+                $this->log("⚠️  Base SQLite en modo solo lectura; se omiten migraciones adicionales.");
+                return;
+            }
+            throw $e;
+        }
 
         $this->log("✅ Tablas listas en {$this->dbPath}");
+    }
+
+    private function isReadOnlySqliteError(PDOException $e): bool
+    {
+        $msg = strtolower($e->getMessage());
+        return str_contains($msg, 'readonly')
+            || str_contains($msg, 'attempt to write a readonly database');
+    }
+
+    private function isMissingTableError(PDOException $e, string $table): bool
+    {
+        $msg = strtolower($e->getMessage());
+        return str_contains($msg, 'no such table') && str_contains($msg, strtolower($table));
     }
 
     /**
@@ -191,6 +242,74 @@ class DatabaseManager
 
         if (!in_array('otro_texto', $columns, true)) {
             $conn->exec("ALTER TABLE solventaciones ADD COLUMN otro_texto TEXT");
+        }
+
+        // Columnas de pre-validación previas se mantienen por compatibilidad,
+        // pero la nueva lógica usa la tabla prevalidaciones.
+    }
+
+    /**
+     * Inicializa estado global del flujo de resultados
+     */
+    public function migrateWorkflowDefaults(): void
+    {
+        $conn = $this->connect();
+        $stmt = $conn->prepare("
+            INSERT INTO workflow_estado (clave, valor, actualizado_por)
+            VALUES ('validacion_resultados', 'borrador', 'SISTEMA')
+            ON CONFLICT(clave) DO NOTHING
+        ");
+        $stmt->execute();
+    }
+
+    /**
+     * Migra pre-validaciones antiguas guardadas en solventaciones hacia la nueva tabla.
+     */
+    public function migrateLegacyPrevalidaciones(): void
+    {
+        $conn = $this->connect();
+        $columnsStmt = $conn->query("PRAGMA table_info(solventaciones)");
+        $columns = array_column($columnsStmt->fetchAll(PDO::FETCH_ASSOC), 'name');
+        if (!in_array('pre_validado', $columns, true) || !in_array('pre_checklist', $columns, true)) {
+            return;
+        }
+
+        $stmt = $conn->query("
+            SELECT rfc, ente, pre_validado, pre_checklist, pre_usuario
+            FROM solventaciones
+            WHERE COALESCE(pre_validado, 0) = 1
+               OR COALESCE(pre_checklist, '') <> ''
+        ");
+        $rows = $stmt->fetchAll();
+        if (empty($rows)) {
+            return;
+        }
+
+        $upsert = $conn->prepare("
+            INSERT INTO prevalidaciones
+                (rfc, ente, estado, comentario, catalogo, otro_texto, actualizado, usuario)
+            VALUES
+                (?, ?, ?, ?, '', '', CURRENT_TIMESTAMP, ?)
+            ON CONFLICT(rfc, ente) DO NOTHING
+        ");
+
+        foreach ($rows as $row) {
+            $estado = ((int)($row['pre_validado'] ?? 0) === 1) ? 'Solventado' : 'Sin valoración';
+            $comentario = '';
+            if (!empty($row['pre_checklist'])) {
+                $decoded = json_decode((string)$row['pre_checklist'], true);
+                if (is_array($decoded) && !empty($decoded)) {
+                    $comentario = 'Migrado checklist: ' . implode('; ', array_map(fn($v) => (string)$v, $decoded));
+                }
+            }
+
+            $upsert->execute([
+                (string)$row['rfc'],
+                (string)$row['ente'],
+                $estado,
+                $comentario,
+                (string)($row['pre_usuario'] ?? 'migracion')
+            ]);
         }
     }
 
@@ -794,7 +913,11 @@ class DatabaseManager
     public function getSolventacionesPorRfc(string $rfc): array
     {
         $conn = $this->connect();
-        $stmt = $conn->prepare("SELECT ente, estado, comentario FROM solventaciones WHERE rfc=?");
+        $stmt = $conn->prepare("
+            SELECT ente, estado, comentario
+            FROM solventaciones
+            WHERE rfc=?
+        ");
         $stmt->execute([$rfc]);
 
         $data = [];
@@ -844,6 +967,72 @@ class DatabaseManager
         return $stmt->rowCount();
     }
 
+    public function guardarPrevalidacionDuplicado(
+        string $rfc,
+        string $ente,
+        string $estado,
+        ?string $comentario,
+        ?string $catalogo,
+        ?string $otroTexto,
+        string $usuario
+    ): int {
+        if (!$estado) {
+            $estado = 'Sin valoración';
+        }
+        $enteNorm = $this->normalizarEnteClave($ente) ?? $ente;
+
+        $conn = $this->connect();
+        $stmt = $conn->prepare("
+            INSERT INTO prevalidaciones
+                (rfc, ente, estado, comentario, catalogo, otro_texto, actualizado, usuario)
+            VALUES
+                (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            ON CONFLICT(rfc, ente) DO UPDATE SET
+                estado=excluded.estado,
+                comentario=excluded.comentario,
+                catalogo=excluded.catalogo,
+                otro_texto=excluded.otro_texto,
+                actualizado=CURRENT_TIMESTAMP,
+                usuario=excluded.usuario
+        ");
+        $stmt->execute([$rfc, $enteNorm, $estado, $comentario, $catalogo, $otroTexto, $usuario]);
+
+        return $stmt->rowCount();
+    }
+
+    /**
+     * @return array<string, array{estado:string, comentario:string, catalogo:string, otro_texto:string}>
+     */
+    public function getPrevalidacionesPorRfc(string $rfc): array
+    {
+        $conn = $this->connect();
+        try {
+            $stmt = $conn->prepare("
+                SELECT ente, estado, comentario, catalogo, otro_texto
+                FROM prevalidaciones
+                WHERE rfc = ?
+            ");
+            $stmt->execute([$rfc]);
+        } catch (PDOException $e) {
+            if ($this->isMissingTableError($e, 'prevalidaciones')) {
+                return [];
+            }
+            throw $e;
+        }
+
+        $data = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $data[$row['ente']] = [
+                'estado' => (string)($row['estado'] ?? 'Sin valoración'),
+                'comentario' => (string)($row['comentario'] ?? ''),
+                'catalogo' => (string)($row['catalogo'] ?? ''),
+                'otro_texto' => (string)($row['otro_texto'] ?? '')
+            ];
+        }
+
+        return $data;
+    }
+
     /**
      * Obtiene el estado de un RFC en un ente específico
      */
@@ -864,6 +1053,40 @@ class DatabaseManager
         $row = $stmt->fetch();
 
         return $row ? $row['estado'] : null;
+    }
+
+    public function resultadosValidados(): bool
+    {
+        $conn = $this->connect();
+        try {
+            $stmt = $conn->prepare("
+                SELECT valor
+                FROM workflow_estado
+                WHERE clave = 'validacion_resultados'
+                LIMIT 1
+            ");
+            $stmt->execute();
+            return strtolower((string)($stmt->fetchColumn() ?: 'borrador')) === 'validados';
+        } catch (PDOException $e) {
+            if ($this->isMissingTableError($e, 'workflow_estado')) {
+                return false;
+            }
+            throw $e;
+        }
+    }
+
+    public function marcarResultadosValidados(string $usuario): void
+    {
+        $conn = $this->connect();
+        $stmt = $conn->prepare("
+            INSERT INTO workflow_estado (clave, valor, actualizado_por)
+            VALUES ('validacion_resultados', 'validados', ?)
+            ON CONFLICT(clave) DO UPDATE SET
+                valor='validados',
+                actualizado=CURRENT_TIMESTAMP,
+                actualizado_por=excluded.actualizado_por
+        ");
+        $stmt->execute([$usuario]);
     }
 
     /**

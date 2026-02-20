@@ -175,6 +175,93 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  // Pre-validación de duplicados (solo para Luis)
+  const preForms = document.querySelectorAll(".prevalidacion-form");
+  preForms.forEach(form => {
+    const estadoEl = form.querySelector(".pre-estado");
+    const catalogoWrap = form.querySelector(".pre-catalogo-wrap");
+    const catalogoEl = form.querySelector(".pre-catalogo");
+    const otroWrap = form.querySelector(".pre-otro-wrap");
+    const otroEl = form.querySelector(".pre-otro-texto");
+
+    function syncPreFormVisibility() {
+      const estado = estadoEl ? estadoEl.value : "Sin valoración";
+      const muestraCatalogo = estado === "Solventado" || estado === "No Solventado";
+      if (catalogoWrap) catalogoWrap.style.display = muestraCatalogo ? "" : "none";
+
+      const muestraOtro = muestraCatalogo && catalogoEl && catalogoEl.value === "Otro";
+      if (otroWrap) otroWrap.style.display = muestraOtro ? "" : "none";
+
+      if (!muestraCatalogo && catalogoEl) {
+        catalogoEl.value = "";
+      }
+      if (!muestraOtro && otroEl) {
+        otroEl.value = "";
+      }
+    }
+
+    if (estadoEl) estadoEl.addEventListener("change", syncPreFormVisibility);
+    if (catalogoEl) catalogoEl.addEventListener("change", syncPreFormVisibility);
+    syncPreFormVisibility();
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const rfc = form.dataset.rfc || "";
+      const ente = form.dataset.ente || "";
+      const msg = form.querySelector(".prevalidacion-msg");
+      const estado = form.querySelector('select[name="pre_estado"]')?.value || "Sin valoración";
+      const catalogo = form.querySelector('select[name="pre_catalogo"]')?.value || "";
+      const otroTexto = form.querySelector('textarea[name="pre_otro_texto"]')?.value?.trim() || "";
+      const valoracion = form.querySelector('textarea[name="pre_valoracion"]')?.value?.trim() || "";
+
+      if (!rfc || !ente) {
+        if (msg) msg.textContent = "Faltan datos RFC/ente.";
+        return;
+      }
+
+      if ((estado === "Solventado" || estado === "No Solventado") && !catalogo) {
+        if (msg) msg.textContent = "Selecciona una opción de catálogo.";
+        return;
+      }
+      if (catalogo === "Otro" && !otroTexto) {
+        if (msg) msg.textContent = "Escribe el texto para la opción Otro.";
+        return;
+      }
+
+      if (msg) msg.textContent = "Guardando...";
+
+      try {
+        const res = await fetch("/prevalidar_duplicado", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rfc,
+            ente,
+            estado,
+            valoracion,
+            catalogo,
+            otro_texto: otroTexto
+          })
+        });
+
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          throw new Error("Respuesta inválida del servidor");
+        }
+
+        const data = await res.json();
+        if (!res.ok || data.error) {
+          throw new Error(data.error || `Error ${res.status}`);
+        }
+
+        if (msg) msg.textContent = "✓ Pre-validación guardada";
+      } catch (error) {
+        if (msg) msg.textContent = "✗ " + error.message;
+      }
+    });
+  });
+
   // ===========================================================
   // CATÁLOGOS — Pestañas dinámicas
   // ===========================================================
@@ -280,4 +367,3 @@ if (formSolv) {
     });
   }
 });
-
