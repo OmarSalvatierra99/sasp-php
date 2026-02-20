@@ -173,7 +173,9 @@ ob_start();
               </thead>
               <tbody>
                 <?php foreach ($lista as $r): ?>
-                  <tr class="fila-result">
+                  <tr
+                    class="fila-result search-row"
+                    data-search="<?php echo htmlspecialchars(strtolower(trim((string)($r['rfc'] ?? '') . ' ' . (string)($r['nombre'] ?? '')))); ?>">
                     <td>
                       <?php if (!empty($r['rfc'])): ?>
                         <a class="link-rfc" href="/resultados/<?php echo urlencode((string)$r['rfc']); ?>"><?php echo htmlspecialchars((string)$r['rfc']); ?></a>
@@ -254,7 +256,9 @@ ob_start();
                     $qnasTrab = array_keys((array)($trab['qnas'] ?? []));
                     $qnasLabel = empty($qnasTrab) ? '-' : implode(', ', $qnasTrab);
                   ?>
-                  <tr>
+                  <tr
+                    class="search-row"
+                    data-search="<?php echo htmlspecialchars(strtolower(trim((string)($trab['rfc'] ?? '') . ' ' . (string)($trab['nombre'] ?? '')))); ?>">
                     <td>
                       <?php if (!empty($trab['rfc'])): ?>
                         <a class="link-rfc" href="/resultados/<?php echo urlencode((string)$trab['rfc']); ?>">

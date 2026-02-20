@@ -125,21 +125,32 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Search functionality with accordion integration
+  function normalizeSearchText(text) {
+    return (text || "")
+      .toString()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   const searchInput = document.getElementById("searchInput");
   if (searchInput) {
-    searchInput.addEventListener("input", () => {
-      const query = searchInput.value.toLowerCase().trim();
+    const runSearch = () => {
+      const query = normalizeSearchText(searchInput.value);
+      const terms = query ? query.split(" ") : [];
       const acordeones = document.querySelectorAll(".ente-bloque.acordeon");
 
       acordeones.forEach(acordeon => {
-        const filas = acordeon.querySelectorAll(".fila-result");
+        const filas = acordeon.querySelectorAll("tr.search-row");
         let hasVisibleRows = false;
 
         filas.forEach(fila => {
-          const rfc = fila.querySelector(".link-rfc")?.textContent.toLowerCase() || "";
-          const nombre = fila.cells[1]?.textContent.toLowerCase() || "";
+          const textoBusqueda = normalizeSearchText(fila.dataset.search || "");
+          const matches = terms.length === 0 || terms.every(term => textoBusqueda.includes(term));
 
-          if (!query || rfc.includes(query) || nombre.includes(query)) {
+          if (matches) {
             fila.style.display = "";
             hasVisibleRows = true;
           } else {
@@ -148,7 +159,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
         // Show/hide accordion based on whether it has visible rows
-        if (query && !hasVisibleRows) {
+        if (query && filas.length > 0 && !hasVisibleRows) {
           acordeon.style.display = "none";
         } else {
           acordeon.style.display = "";
@@ -158,10 +169,16 @@ document.addEventListener("DOMContentLoaded", () => {
             const icono = acordeon.querySelector(".acordeon-icono");
             if (contenido) contenido.style.display = "block";
             if (icono) icono.textContent = "▼";
+          } else if (!query) {
+            const icono = acordeon.querySelector(".acordeon-icono");
+            if (icono) icono.textContent = "▶";
           }
         }
       });
-    });
+    };
+
+    searchInput.addEventListener("input", runSearch);
+    searchInput.addEventListener("search", runSearch);
   }
 
   const selectEnte = document.getElementById("selectEnte");

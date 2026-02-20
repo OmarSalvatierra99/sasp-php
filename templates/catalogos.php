@@ -29,11 +29,19 @@ ob_start();
         </thead>
         <tbody>
           <?php foreach ($entes as $ente): ?>
+            <?php
+              $nombre = (string)($ente['nombre'] ?? '-');
+              $siglas = (string)($ente['siglas'] ?? '-');
+              $clasificacion = (string)($ente['clasificacion'] ?? '-');
+              $nombreMayus = function_exists('mb_strtoupper') ? mb_strtoupper($nombre, 'UTF-8') : strtoupper($nombre);
+              $siglasMayus = function_exists('mb_strtoupper') ? mb_strtoupper($siglas, 'UTF-8') : strtoupper($siglas);
+              $clasificacionMayus = function_exists('mb_strtoupper') ? mb_strtoupper($clasificacion, 'UTF-8') : strtoupper($clasificacion);
+            ?>
             <tr>
               <td><?php echo htmlspecialchars((string)($ente['num'] ?? '-')); ?></td>
-              <td><?php echo htmlspecialchars((string)$ente['nombre']); ?></td>
-              <td><?php echo htmlspecialchars((string)($ente['siglas'] ?? '-')); ?></td>
-              <td><?php echo htmlspecialchars((string)($ente['clasificacion'] ?? '-')); ?></td>
+              <td><?php echo htmlspecialchars($nombreMayus); ?></td>
+              <td><?php echo htmlspecialchars($siglasMayus); ?></td>
+              <td><?php echo htmlspecialchars($clasificacionMayus); ?></td>
             </tr>
           <?php endforeach; ?>
         </tbody>
