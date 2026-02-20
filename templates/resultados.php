@@ -83,9 +83,11 @@ ob_start();
       <?php else: ?>
         <form method="post" action="/validar_datos" class="form-inline">
           <button type="submit" class="btn btn-primary">Validar datos</button>
-          <span class="subtitle">Al validar, los demás usuarios verán duplicados.</span>
+          <span class="subtitle">Al validar, los demás usuarios verán duplicados no solventados.</span>
         </form>
       <?php endif; ?>
+      <span class="badge badge-info">RFC solventados: <?php echo (int)(($resumen_prevalidacion['rfc_solventados'] ?? 0)); ?></span>
+      <span class="badge badge-info">Registros solventados: <?php echo (int)(($resumen_prevalidacion['registros_solventados'] ?? 0)); ?></span>
     </div>
   <?php endif; ?>
 
@@ -205,7 +207,7 @@ ob_start();
                         <form class="prevalidacion-form" data-rfc="<?php echo htmlspecialchars((string)$r['rfc']); ?>" data-ente="<?php echo htmlspecialchars((string)($r['ente_origen'] ?? $enteNombre)); ?>">
                           <label style="display:block; font-size:.85rem;">Estado</label>
                           <select name="pre_estado" class="pre-estado" style="width:100%;">
-                            <option value="Sin valoración" <?php echo ($preEstado === 'Sin valoración') ? 'selected' : ''; ?>>Sin valoración</option>
+                            <option value="Sin valoración" <?php echo ($preEstado === 'Sin valoración') ? 'selected' : ''; ?>>Sin valoración (cancelar solventación)</option>
                             <option value="Solventado" <?php echo ($preEstado === 'Solventado') ? 'selected' : ''; ?>>Solventado</option>
                           </select>
 

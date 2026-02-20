@@ -262,8 +262,15 @@ class Application
         $resultadosValidados = $this->dbManager->resultadosValidados();
         $mostrarDuplicados = $esLuis || $resultadosValidados;
         $modoPermiso = $esLuis ? "ALL" : $this->allowedAll($entesUsuario);
+        $resumenPrevalidacion = [
+            'rfc_solventados' => 0,
+            'registros_solventados' => 0
+        ];
 
-        $resultados = $this->filtrarDuplicadosConVisibilidad($this->dbManager->obtenerCrucesReales());
+        $resultadosBase = $this->dbManager->obtenerCrucesReales();
+        $resultados = $esLuis
+            ? $this->filtrarDuplicadosReales($resultadosBase)
+            : $this->filtrarDuplicadosConVisibilidad($resultadosBase);
         $trabajadoresPorEnte = $this->dbManager->contarTrabajadoresPorEnte();
         $trabajadoresDetallados = $this->dbManager->obtenerTrabajadoresPorEnte();
         $catalogo = array_merge($this->dbManager->listarEntes(), $this->dbManager->listarMunicipios());
@@ -296,13 +303,16 @@ class Application
         }
 
         if ($mostrarDuplicados) {
+            $rfcSolventados = [];
+            $registrosSolventados = [];
+
             // Agrupar duplicados por ente
             foreach ($resultados as $r) {
                 $mapaSolvs = $this->dbManager->getSolventacionesPorRfc($r['rfc']);
                 $mapaPre = $this->dbManager->getPrevalidacionesPorRfc($r['rfc']);
 
                 foreach ($r['entes'] as $enteClave) {
-                    if ($this->esPrevalidadoOculto($mapaPre, $enteClave)) {
+                    if (!$esLuis && $this->esPrevalidadoOculto($mapaPre, $enteClave)) {
                         continue;
                     }
 
@@ -332,6 +342,12 @@ class Application
 
                     $claveEnteActual = $this->dbManager->normalizarEnteClave($enteClave) ?? $enteClave;
                     $pre = $mapaPre[$claveEnteActual] ?? [];
+                    $preEstado = (string)($pre['estado'] ?? 'Sin valoración');
+
+                    if (strtoupper(trim($preEstado)) === 'SOLVENTADO') {
+                        $rfcSolventados[(string)$r['rfc']] = true;
+                        $registrosSolventados[(string)$r['rfc'] . '|' . (string)$claveEnteActual] = true;
+                    }
 
                     $agrupado[$display][] = [
                         'rfc' => $r['rfc'],
@@ -341,13 +357,18 @@ class Application
                         'estado' => $estadoDefault,
                         'estado_entes' => $estadoEntes,
                         'ente_origen' => $enteClave,
-                        'pre_estado' => $pre['estado'] ?? 'Sin valoración',
+                        'pre_estado' => $preEstado,
                         'pre_valoracion' => $pre['comentario'] ?? '',
                         'pre_catalogo' => $pre['catalogo'] ?? '',
                         'pre_otro_texto' => $pre['otro_texto'] ?? ''
                     ];
                 }
             }
+
+            $resumenPrevalidacion = [
+                'rfc_solventados' => count($rfcSolventados),
+                'registros_solventados' => count($registrosSolventados)
+            ];
         }
 
         // Calcular duplicados por ente y ordenar
@@ -457,7 +478,7 @@ class Application
 
         $resumenAuditoria = [
             ['m' => 'Entes analizados', 'v' => (string)$entesVisibles],
-            ['m' => 'Trabajadores analizados (RFC únicos)', 'v' => (string)$trabajadoresProcesados],
+            ['m' => 'Trabajadores analizados (RFC únicos)', 'v' => number_format($trabajadoresProcesados, 0, '.', ',')],
             ['m' => 'Casos de duplicidad (RFC únicos)', 'v' => (string)$duplicadosDetectados],
             ['m' => 'Entes con duplicidad', 'v' => (string)$entesConDuplicidad],
             ['m' => 'Índice de duplicidad', 'v' => number_format($indiceDuplicidad, 2) . '%']
@@ -475,6 +496,7 @@ class Application
             'validacion_error' => $validacionError,
             'validacion_error_msg' => $validacionErrorMsg,
             'resumen_auditoria' => $resumenAuditoria,
+            'resumen_prevalidacion' => $resumenPrevalidacion,
             'resumen' => [
                 'entes_visibles' => $entesVisibles,
                 'registros_cargados' => $registrosCargados,
@@ -486,7 +508,9 @@ class Application
 
     private function resultadosPorRfc(string $rfc): void
     {
-        if (!$this->esUsuarioLuis() && !$this->dbManager->resultadosValidados()) {
+        $esLuis = $this->esUsuarioLuis();
+
+        if (!$esLuis && !$this->dbManager->resultadosValidados()) {
             $this->redirect('/resultados');
             return;
         }
@@ -496,6 +520,35 @@ class Application
         if (!$info) {
             $this->render('empty.php', ['mensaje' => 'No hay registros del trabajador.']);
             return;
+        }
+
+        if (!$esLuis) {
+            $mapaPre = $this->dbManager->getPrevalidacionesPorRfc($rfc);
+            if (!empty($mapaPre)) {
+                $registrosVisibles = [];
+                $entesVisibles = [];
+
+                foreach (($info['registros'] ?? []) as $reg) {
+                    $enteReg = (string)($reg['ente'] ?? '');
+                    if ($enteReg !== '' && $this->esPrevalidadoOculto($mapaPre, $enteReg)) {
+                        continue;
+                    }
+
+                    $registrosVisibles[] = $reg;
+                    if ($enteReg !== '') {
+                        $entesVisibles[$enteReg] = true;
+                    }
+                }
+
+                $info['registros'] = $registrosVisibles;
+                $info['entes'] = array_keys($entesVisibles);
+                sort($info['entes']);
+            }
+
+            if (count(($info['entes'] ?? [])) < 2) {
+                $this->render('empty.php', ['mensaje' => 'Este RFC fue solventado y ya no está visible para este usuario.']);
+                return;
+            }
         }
 
         $mapaSolvs = $this->dbManager->getSolventacionesPorRfc($rfc);
@@ -513,7 +566,7 @@ class Application
         $this->render('detalle_rfc.php', [
             'rfc' => $rfc,
             'info' => $info,
-            'es_luis' => $this->esUsuarioLuis()
+            'es_luis' => $esLuis
         ]);
     }
 
@@ -729,9 +782,10 @@ class Application
     {
         $enteFiltro = trim((string)$request->query('ente', ''));
         $entesUsuario = $_SESSION['entes'] ?? [];
-        $modoPermiso = $this->esUsuarioLuis() ? "ALL" : $this->allowedAll($entesUsuario);
+        $esLuis = $this->esUsuarioLuis();
+        $modoPermiso = $esLuis ? "ALL" : $this->allowedAll($entesUsuario);
 
-        if (!$this->esUsuarioLuis() && !$this->dbManager->resultadosValidados()) {
+        if (!$esLuis && !$this->dbManager->resultadosValidados()) {
             $this->redirect('/resultados');
             return;
         }
@@ -741,7 +795,10 @@ class Application
             return;
         }
 
-        $resultados = $this->filtrarDuplicadosConVisibilidad($this->dbManager->obtenerCrucesReales());
+        $resultadosBase = $this->dbManager->obtenerCrucesReales();
+        $resultados = $esLuis
+            ? $this->filtrarDuplicadosReales($resultadosBase)
+            : $this->filtrarDuplicadosConVisibilidad($resultadosBase);
         $permitidos = array_filter($resultados, function ($r) use ($enteFiltro, $entesUsuario, $modoPermiso) {
             foreach ($r['entes'] as $ente) {
                 if ($this->enteDisplay($ente) === $enteFiltro &&
@@ -759,12 +816,17 @@ class Application
 
     private function exportarExcelGeneral(): void
     {
-        if (!$this->esUsuarioLuis() && !$this->dbManager->resultadosValidados()) {
+        $esLuis = $this->esUsuarioLuis();
+
+        if (!$esLuis && !$this->dbManager->resultadosValidados()) {
             $this->redirect('/resultados');
             return;
         }
 
-        $resultados = $this->filtrarDuplicadosConVisibilidad($this->dbManager->obtenerCrucesReales());
+        $resultadosBase = $this->dbManager->obtenerCrucesReales();
+        $resultados = $esLuis
+            ? $this->filtrarDuplicadosReales($resultadosBase)
+            : $this->filtrarDuplicadosConVisibilidad($resultadosBase);
         $rows = $this->construirFilasExport($resultados);
         $this->exportarSpreadsheet($rows, 'SASP_Resultados_Generales');
     }
