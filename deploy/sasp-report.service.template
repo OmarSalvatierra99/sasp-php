@@ -1,0 +1,12 @@
+[Unit]
+Description=Enviar reporte de incompatibilidades SASP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__WORKDIR__
+EnvironmentFile=__ENV_FILE__
+ExecStart=/usr/bin/python3 __WORKDIR__/scripts/send_server_report.py
+User=__RUN_USER__
+Group=__RUN_GROUP__

@@ -1,0 +1,10 @@
+[Unit]
+Description=Ejecucion automatica de reporte SASP
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=sasp-report.service
+
+[Install]
+WantedBy=timers.target
