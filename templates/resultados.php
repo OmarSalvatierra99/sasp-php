@@ -197,6 +197,9 @@ ob_start();
 
         <div class="acordeon-contenido" style="display: none;">
           <?php if ($tieneDuplicados): ?>
+            <div style="margin: var(--space-5) 0 var(--space-3); font-weight: 600;">
+              Trabajadores duplicados en este ente
+            </div>
             <table class="tabla-resultados">
               <thead>
                 <tr>

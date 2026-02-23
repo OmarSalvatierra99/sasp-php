@@ -558,7 +558,7 @@ class Application
             }
 
             if (count(($info['entes'] ?? [])) < 2) {
-                $this->render('empty.php', ['mensaje' => 'Este RFC fue solventado y ya no está visible para este usuario.']);
+                $this->render('empty.php', ['mensaje' => 'Este RFC no presenta ninguna incompatibilidad']);
                 return;
             }
         }
@@ -1398,7 +1398,7 @@ class Application
         string $filtroEnte,
         string $ambitoSel,
         array $entesUsuario,
-        string $modoPermiso
+        ?string $modoPermiso
     ): array {
         $rfcSolventados = [];
         $registrosSolventados = [];
