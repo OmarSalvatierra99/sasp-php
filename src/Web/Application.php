@@ -1268,8 +1268,18 @@ class Application
     private function construirFilasExport(array $resultados): array
     {
         $filas = [];
+        $rfcsResultados = array_values(array_unique(array_map(
+            static fn(array $row): string => strtoupper(trim((string)($row['rfc'] ?? ''))),
+            $resultados
+        )));
+        $solventacionesPorRfc = $this->dbManager->getSolventacionesPorRfcs($rfcsResultados);
+        $prevalidacionesPorRfc = $this->dbManager->getPrevalidacionesPorRfcs($rfcsResultados);
+
         foreach ($resultados as $r) {
             $registros = $r['registros'] ?? [];
+            $rfcActual = strtoupper(trim((string)($r['rfc'] ?? '')));
+            $mapaSolvs = $solventacionesPorRfc[$rfcActual] ?? [];
+            $mapaPre = $prevalidacionesPorRfc[$rfcActual] ?? [];
 
             $qnasPorEnte = [];
             foreach ($registros as $reg) {
@@ -1311,10 +1321,11 @@ class Application
                 }
 
                 $enteDisplay = $this->enteDisplay($enteOrigen);
-                $estado = $this->dbManager->getEstadoRfcEnte(
-                    $r['rfc'],
-                    $this->dbManager->normalizarEnteClave($enteOrigen) ?? $enteOrigen
-                ) ?? ($r['estado'] ?? 'Sin valoración');
+                $claveEnte = $this->dbManager->normalizarEnteClave($enteOrigen) ?? $enteOrigen;
+                $pre = $mapaPre[$claveEnte] ?? [];
+                $solv = $mapaSolvs[$claveEnte] ?? [];
+                $estado = (string)($pre['estado'] ?? $solv['estado'] ?? ($r['estado'] ?? 'Sin valoración'));
+                $solventacion = $this->resolverTextoSolventacion($pre, $solv, (string)($r['solventacion'] ?? ''));
 
                 $filas[] = [
                     'RFC' => $r['rfc'],
@@ -1330,12 +1341,45 @@ class Application
                     )) ?: 'Sin otros entes',
                     'Quincenas' => $qnasLabel,
                     'Estatus' => $estado,
-                    'Solventacion' => $r['solventacion'] ?? ''
+                    'Solventacion' => $solventacion
                 ];
             }
         }
 
         return $filas;
+    }
+
+    /**
+     * @param array<string, mixed> $pre
+     * @param array<string, mixed> $solv
+     */
+    private function resolverTextoSolventacion(array $pre, array $solv, string $fallback = ''): string
+    {
+        $catalogo = trim((string)($pre['catalogo'] ?? ''));
+        $otro = trim((string)($pre['otro_texto'] ?? ''));
+        $comentario = trim((string)($pre['comentario'] ?? ''));
+
+        $motivo = '';
+        if ($catalogo !== '') {
+            $motivo = $catalogo === 'Otro' ? ($otro !== '' ? $otro : 'Otro') : $catalogo;
+        }
+
+        if ($motivo !== '' && $comentario !== '') {
+            return $motivo . ' - ' . $comentario;
+        }
+        if ($motivo !== '') {
+            return $motivo;
+        }
+        if ($comentario !== '') {
+            return $comentario;
+        }
+
+        $comentarioSolv = trim((string)($solv['comentario'] ?? ''));
+        if ($comentarioSolv !== '') {
+            return $comentarioSolv;
+        }
+
+        return trim($fallback);
     }
 
     private function exportarSpreadsheet(array $rows, string $filenameBase, ?array $headers = null): void
@@ -1353,7 +1397,8 @@ class Application
                 'Total Percepciones',
                 'Entes Incompatibilidad',
                 'Quincenas Cruce',
-                'Estatus'
+                'Estatus',
+                'Solventacion'
             ];
         }
 
